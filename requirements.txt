@@ -1,10 +1,19 @@
 # 범용 웹 크롤링 에이전트 — Python 의존성
-# 설치: pip install -r requirements.txt
-# 그 다음 브라우저 바이너리도 받아야 함 (requirements.txt로는 안 됨):
-#   scrapling install          # Scrapling용 브라우저(Camoufox/Chromium)
-#   playwright install chromium # Playwright용 Chromium
+#
+# 신규 환경은 한 방 설치 권장:
+#   Windows : powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+#   기타    : python -m venv .venv && . .venv/bin/activate && python scripts/bootstrap.py
+#
+# 수동 설치:
+#   pip install -r requirements.txt
+#   scrapling install     # Chromium 설치 (Windows venv: .\.venv\Scripts\scrapling.exe install)
+#     → scrapling install 이 내부적으로 'playwright install chromium' 을 수행한다.
+#       따라서 playwright install 을 따로 또 실행할 필요 없음 (중복).
+#
+# 참고: bare `scrapling` 은 파서만 설치된다. fetcher 런타임(curl_cffi/playwright/patchright 등)은
+#       [fetchers] extra 로 들어오므로 아래처럼 extra 를 반드시 포함해야 smoke_test 가 통과한다.
 
-scrapling      # 수집 엔진 — Fetcher/StealthyFetcher/DynamicFetcher/Spider, 셀렉터 자가치유
-openpyxl       # 엑셀(.xlsx) 출력
-playwright     # 브라우저 렌더링 — Scrapling 백엔드 + Codex 정찰용 sync_api 인터셉트
-pytest         # 테스트 실행 (개발용)
+scrapling[fetchers]>=0.4.8   # 수집 엔진 + fetcher 런타임 일괄(click, curl_cffi, playwright, patchright, browserforge, msgspec, anyio, apify-fingerprint-datapoints)
+protego>=0.3.0               # robots.txt 파서 (Step 5 robots 확인 등 런타임에서 사용)
+openpyxl>=3.1                # 엑셀(.xlsx) 출력
+pytest>=8.0                  # 테스트 실행 (개발용)

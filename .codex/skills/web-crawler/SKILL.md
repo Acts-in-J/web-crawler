@@ -73,7 +73,11 @@ profile_mgr.save(domain, {
 
 ## Step 2: 정찰 (agent-browser)
 
+> **agent-browser는 이 프로젝트의 표준 정찰 도구다 (선택 아님).** 단순 정적 사이트를 긁더라도 정찰 단계에서는 agent-browser를 먼저 사용한다.
+>
 > **시작 전 (양 host 공통)**: `agent-browser skills get core --full`을 실행해 agent-browser 사용법(snapshot-and-ref 워크플로우, 네트워크 캡처 등)을 로드한다. 사용법은 CLI에 내장돼 항상 버전 일치하며, Claude Code·Codex 모두 이 한 줄로 동일하게 준비된다.
+>
+> CLI가 없거나 브라우저 실행이 막힌 제한 환경에서만 Scrapling `DynamicFetcher` / Playwright `sync_api`로 정찰을 대체한다(degraded fallback). 환경 셋업·검증은 `scripts/setup.ps1`(Windows) 또는 `scripts/bootstrap.py` + `scripts/preflight.py`.
 
 ### 정찰 규칙
 - agent-browser 접근 **최대 2회** 시도

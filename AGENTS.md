@@ -4,17 +4,29 @@
 
 ## 최초 환경 셋업 (클론 직후 1회)
 
-수집을 시도하기 전에 환경이 준비됐는지 확인한다. 미설치면 아래를 실행:
+수집 전에 환경을 준비한다. **한 명령**으로 단계별 설치+검증을 하고, 이미 된 단계는 skip한다:
 
+```powershell
+# Windows (PowerShell) — 실행 정책 우회가 표준
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+```
 ```bash
-pip install -r requirements.txt    # scrapling, openpyxl, playwright, pytest
-scrapling install                  # Scrapling용 브라우저(Camoufox/Chromium)
-playwright install chromium        # 정찰/렌더링용 Chromium
-npm install -g agent-browser && agent-browser install   # 정찰 CLI (양 host 공통; PowerShell 정책 오류 시 agent-browser.cmd)
-python scripts/smoke_test.py       # 검증: Fetcher/StealthyFetcher/DynamicFetcher 전부 [PASS]면 정상
+# macOS / Linux
+python -m venv .venv && . .venv/bin/activate && python scripts/bootstrap.py
 ```
 
-`agent-browser`는 독립 CLI라 Codex에서도 동일하게 쓴다. 설치/실행이 막힌 제한된 환경이면 정찰을 Playwright/`DynamicFetcher`로 대체. 전체 셋업 가이드는 `README.md`의 "처음 설치하기" 참조.
+단계: ① Python deps → ② 브라우저(Chromium) → ③ agent-browser(표준 정찰 도구) → ④ preflight 검증.
+실패하면 "다음에 실행할 정확한 명령"이 출력된다. 모드: 기본 full(표준) / `--core-only`(agent-browser 제외) / `--skip-browser`.
+
+**수동/디버깅 시 실제 동작하는 명령 (Windows)**:
+```powershell
+pip install -r requirements.txt          # scrapling[fetchers] 포함 — fetcher 런타임 일괄
+scrapling install                        # Chromium 1회 설치 (내부에서 playwright install chromium 수행 — 따로 또 X)
+npm.cmd install -g agent-browser ; agent-browser.cmd install   # PowerShell은 .cmd 사용
+python scripts\preflight.py              # 검증: core / agent-browser 분리 PASS·WARN·FAIL
+```
+- `python -m scrapling`은 동작 안 함 → `scrapling install`(venv 활성화) 또는 `.\.venv\Scripts\scrapling.exe install`.
+- 검증은 `scripts/preflight.py`가 담당: **core(Python/Scrapling/Playwright)**와 **agent-browser**를 분리 보고. core 통과·agent-browser 실패면 "전체 설치 미완료"(종료코드 1). 전체 가이드는 `README.md` "처음 설치하기".
 
 ## 스킬 소스 (생성 미러)
 
@@ -31,10 +43,10 @@ python scripts/smoke_test.py       # 검증: Fetcher/StealthyFetcher/DynamicFetc
 
 3. **프로필 게이트.** Step 1-A(프로필 있으면 load) ↔ Step 5-A(수집 성공 직후 save/갱신, `notes` 필드 필수). Step 5-A를 빠뜨리면 수집 결과가 살아있어도 **"파이프라인 미완료"**로 보고한다.
 
-## 정찰 도구 — 양 host 공통
+## 정찰 도구 — agent-browser가 표준 (양 host 공통)
 
-- 정찰(Step 2)의 **1순위 도구는 `agent-browser`**다. 이것은 vercel-labs의 독립 CLI(`npm install -g agent-browser`)이므로 **Claude Code·Codex 모두에서 동일하게 쓴다** — Claude 전용이 아니다. 셋업돼 있으면 Codex도 그대로 사용한다. 사용법은 양 host 모두 정찰 시작 전 `agent-browser skills get core --full`로 로드한다 — CLI에 내장돼 항상 버전 일치(파일 복사 불필요).
-- agent-browser를 못 쓰는 환경(미설치, 또는 브라우저 실행이 막힌 제한된 Codex 클라우드 샌드박스)에서는 **Scrapling `DynamicFetcher`** 또는 **Playwright `sync_api` 스크립트**(`page.on("response")`로 XHR/API 캡처)로 정찰을 대체한다. 둘 다 Python 의존성에 포함돼 항상 가능. (SKILL.md 규칙 1 예외와 동일한 Playwright 사용.)
+- 정찰(Step 2)의 **표준·기본 도구는 `agent-browser`**다. 선택 기능이 아니다 — 워크플로상 정찰 단계에서는 **단순 정적 사이트를 긁더라도 agent-browser를 먼저 사용**한다. vercel-labs의 독립 CLI(`npm install -g agent-browser`)라 **Claude Code·Codex 모두 동일하게** 쓴다(Claude 전용 아님). 사용법은 양 host 모두 정찰 시작 전 `agent-browser skills get core --full`로 로드 — CLI 내장, 항상 버전 일치(파일 복사 불필요).
+- **대체(degraded fallback)** — agent-browser CLI 설치가 안 됐거나 브라우저 실행이 막힌 제한된 샌드박스에서만: **Scrapling `DynamicFetcher`** 또는 **Playwright `sync_api`**(`page.on("response")`로 XHR/API 캡처). 둘 다 Python 의존성에 포함돼 항상 가능. (SKILL.md 규칙 1 예외와 동일.) 이 경우에도 가능하면 `agent-browser.cmd install`로 표준 경로 복구를 먼저 시도한다.
 - **수집·프로필·엑셀·CDP는 양 host 완전 동일**: 수집(Scrapling), 도메인 프로필(`scripts/domain_profile.py`), 엑셀(`scripts/export_excel.py`), Akamai/고급 WAF 대응(`scripts/chrome_cdp.py`), 진행 체크포인트(`scripts/progress.py`).
 
 ## 안전 — 하드룰 (위반 금지)

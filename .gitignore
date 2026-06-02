@@ -14,6 +14,9 @@ __pycache__/
 *.pyc
 .venv/
 
+# Local temp (repo-local pytest/temp — see conftest.py / pytest.ini)
+.tmp/
+
 # IDE
 .vscode/
 .idea/

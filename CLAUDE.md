@@ -8,17 +8,26 @@
 
 ## 최초 환경 셋업 (클론 직후 1회, 수집 전 확인)
 
-수집 시도 전에 의존성이 설치돼 있는지 확인한다. 미설치면 실행:
+수집 시도 전에 환경을 준비한다. **한 명령**으로 단계별 설치+검증(이미 된 단계는 skip):
 
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1     # Windows (venv 자동 생성)
+```
 ```bash
-pip install -r requirements.txt    # scrapling, openpyxl, playwright, pytest
-scrapling install                  # Scrapling용 브라우저(Camoufox/Chromium)
-playwright install chromium        # Playwright용 Chromium
-npm install -g agent-browser && agent-browser install   # 정찰용 (PowerShell 정책 오류 시 agent-browser.cmd)
-python scripts/smoke_test.py       # 검증 — 전부 [PASS]면 정상
+python -m venv .venv && . .venv/bin/activate && python scripts/bootstrap.py   # macOS/Linux
 ```
 
-전체 가이드(비개발자용 포함)는 `README.md`의 "처음 설치하기" 참조.
+수동/디버깅 시 실제 동작 명령:
+```bash
+pip install -r requirements.txt          # scrapling[fetchers] 포함 — fetcher 런타임 일괄
+scrapling install                        # Chromium 1회 (내부에서 playwright install chromium 수행 — 따로 또 X)
+npm.cmd install -g agent-browser ; agent-browser.cmd install   # 표준 정찰 도구 (PowerShell은 .cmd)
+python scripts/preflight.py              # 검증: core / agent-browser 분리 PASS·WARN·FAIL
+```
+
+- `python -m scrapling`은 동작 안 함 → `scrapling install`(venv 활성화) 또는 `.\.venv\Scripts\scrapling.exe install`.
+- 검증은 `scripts/preflight.py`(설치 안 함). core 통과·agent-browser 실패면 "전체 설치 미완료"(exit 1).
+- 전체 가이드(비개발자용 포함)는 `README.md`의 "처음 설치하기" 참조.
 
 ---
 

@@ -39,67 +39,93 @@
 | 필요 | 확인 명령 | 없으면 |
 |------|-----------|--------|
 | **Python 3.10 이상** | `python --version` | [python.org](https://www.python.org/downloads/) 에서 설치 |
-| **Node.js 18 이상** | `node --version` | [nodejs.org](https://nodejs.org/) 에서 설치 (agent-browser용) |
+| **Node.js 18 이상** | PowerShell: `npm.cmd --version` | [nodejs.org](https://nodejs.org/) 에서 설치 (agent-browser용) |
 
-### AI 에이전트에게 셋업 맡기기 (권장)
+> Windows PowerShell에서는 `npm` / `agent-browser` 가 `.ps1` 실행 정책 때문에 막힐 수 있습니다. 그럴 땐 **`npm.cmd` / `agent-browser.cmd`** 를 쓰세요(아래 스크립트는 자동 처리).
 
-아래 내용을 **그대로 복사**해서 Claude Code 또는 Codex에게 주세요:
+### 한 방 설치 (권장)
+
+신규 사용자는 한 명령이면 됩니다. **단계별로 진행하며, 이미 설치된 단계는 자동으로 건너뜁니다.** 실패하면 "다음에 실행할 정확한 명령"을 보여줍니다.
+
+```powershell
+# Windows (PowerShell) — 실행 정책 우회가 표준
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+```
+
+```bash
+# macOS / Linux
+python -m venv .venv && . .venv/bin/activate && python scripts/bootstrap.py
+```
+
+진행 단계: **① Python deps → ② 브라우저(Chromium) → ③ agent-browser → ④ preflight 검증.** 처음 한 번만 오래 걸리고(브라우저·패키지 다운로드), 이후엔 skip되어 빠릅니다.
+
+설치 모드:
+
+| 모드 | 명령 | 용도 |
+|------|------|------|
+| **full (표준)** | `setup.ps1` / `bootstrap.py` | Python + 브라우저 + **agent-browser** + 검증 전체 |
+| `--core-only` | `... -CoreOnly` / `... --core-only` | agent-browser 제외하고 core만 (단, **표준은 full**) |
+| `--skip-browser` | `... -SkipBrowser` / `... --skip-browser` | 브라우저가 이미 있는 환경의 빠른 재검증 |
+
+### AI 에이전트에게 셋업 맡기기
+
+아래를 **그대로 복사**해 Claude Code 또는 Codex에게 주세요:
 
 ```text
 이 레포의 크롤링 환경을 셋업해줘.
 
-1. Python 패키지 설치: `pip install -r requirements.txt` 를 실행해.
-   이어서 브라우저 의존성을 받기 위해 `scrapling install` 과
-   `playwright install chromium` 도 실행해줘.
+1. Windows면 `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` 를,
+   macOS/Linux면 venv 만들고 `python scripts/bootstrap.py` 를 실행해.
+   - 단계별(Python deps → 브라우저 → agent-browser → preflight)로 진행되고
+     이미 된 단계는 skip돼. 어느 단계에서 막혔는지 보고해줘.
+   - PowerShell에서 npm/agent-browser 실행 정책 오류가 나면 npm.cmd / agent-browser.cmd 를 써.
+   - 브라우저는 `scrapling install` 하나로 끝나(내부에서 playwright install chromium 수행).
+     playwright install 을 또 돌리지 마.
 
-2. agent-browser CLI 설치(정찰용): `npm install -g agent-browser` 로
-   글로벌 설치하고, `agent-browser install` 로 Chrome을 셋업해줘.
-   - PowerShell 실행 정책 오류가 나면 `agent-browser.cmd` 를 사용해.
-   - 일반 Chrome이 없어도 중단하지 마. `agent-browser install` 이
-     별도 Chrome for Testing을 설치할 수 있어.
-   - node/npm·네트워크·권한 문제로 실패하면 원인만 명확히 보고해.
-
-3. 설치 검증: `python scripts/smoke_test.py` 를 실행해서
-   Fetcher / StealthyFetcher / DynamicFetcher 가 모두 [PASS] 인지 확인하고,
-   CLI 버전·Chrome 경로와 함께 결과를 요약해줘.
+2. 끝나면 `python scripts/preflight.py` 결과(PASS/WARN/FAIL)를 요약해줘.
+   core(Python/Scrapling/Playwright)와 agent-browser를 구분해서, 막힌 단계와
+   '다음에 실행할 명령'을 알려줘. agent-browser가 실패하면 "전체 설치 미완료"로 보고해.
 ```
 
-### 수동 설치
+### 수동 설치 (단계별)
 
-**1단계 — Python 패키지 (수집·엑셀)**
+Windows PowerShell 기준 — 실제 동작하는 명령입니다.
 
-```bash
-pip install -r requirements.txt    # scrapling, openpyxl, playwright, pytest
-scrapling install                  # Scrapling용 브라우저(Camoufox/Chromium) 다운로드
-playwright install chromium        # Playwright용 Chromium 다운로드
+```powershell
+# 0) venv (최초 1회).  활성화가 막히면 새 세션을: powershell -ExecutionPolicy Bypass
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 1) Python 패키지 (scrapling[fetchers] + openpyxl + pytest)
+pip install -r requirements.txt
+
+# 2) 브라우저(Chromium) — 이거 하나면 됨
+scrapling install                 # 또는:  .\.venv\Scripts\scrapling.exe install
+
+# 3) agent-browser (표준 정찰 도구) — PowerShell은 .cmd
+npm.cmd install -g agent-browser
+agent-browser.cmd install         # 없으면 Chrome for Testing 자동 설치
+
+# 4) 검증 (단계별 PASS/WARN/FAIL — 설치는 안 함)
+python scripts\preflight.py
 ```
 
-**2단계 — agent-browser (정찰용)**
+**꼭 알아둘 점**
+- `python -m scrapling` 은 **동작하지 않습니다**(`__main__` 없음). venv 활성화 후 `scrapling install`, 또는 `.\.venv\Scripts\scrapling.exe install` 을 쓰세요.
+- `scrapling install` 이 내부적으로 `playwright install chromium` 을 수행합니다. **`playwright install` 을 따로 또 돌리지 마세요**(같은 다운로드 반복 → 시간 낭비). 이미 받았으면 즉시 끝납니다.
+- PowerShell에서 `npm` / `agent-browser` 가 실행 정책 오류면 **`npm.cmd` / `agent-browser.cmd`**.
+- 검증만 다시 하려면 `python scripts\preflight.py` (core만: `--core-only`).
 
-```bash
-npm install -g agent-browser       # CLI 글로벌 설치
-agent-browser install              # Chrome 셋업 (없으면 Chrome for Testing 자동 설치)
-```
-
-- Windows PowerShell에서 **실행 정책 오류**가 나면 `agent-browser` 대신 **`agent-browser.cmd`** 를 쓰세요.
-- 참고: [github.com/vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser)
-- > **Claude Code·Codex 모두 사용합니다.** agent-browser는 독립 CLI라 양쪽 host에서 동일하게 정찰에 씁니다. (사용법은 정찰 전 `agent-browser skills get core --full`로 불러오면 됩니다 — CLI에 내장돼 항상 버전 일치.) 설치가 안 됐거나 브라우저 실행이 막힌 환경이라면 정찰을 Playwright / Scrapling `DynamicFetcher`로 대체합니다.
-
-**3단계 — 설치 확인**
-
-```bash
-python scripts/smoke_test.py       # 전부 [PASS]면 수집 환경 정상
-pytest scripts/ -q                 # (선택) 단위 테스트 실행
-```
+> macOS / Linux는 위 명령에서 `py -3 -m venv` → `python3 -m venv`, 활성화 `. .venv/bin/activate`, `npm.cmd`→`npm`, `agent-browser.cmd`→`agent-browser` 로 바꾸면 동일합니다.
 
 ### 핵심 도구 요약
 
 | 도구 | 역할 | 설치 |
 |------|------|------|
-| **Scrapling** | 데이터 수집 (HTTP·브라우저, 셀렉터 자가치유) | `pip install -r requirements.txt` + `scrapling install` |
-| **Playwright** | 브라우저 렌더링 (Scrapling 백엔드 / Codex 정찰) | (위 pip에 포함) + `playwright install chromium` |
-| **openpyxl** | 엑셀(.xlsx) 출력 | (위 pip에 포함) |
-| **agent-browser** | 정찰 — 구조 파악·네트워크 감시 (양 host 공통) | `npm install -g agent-browser` + `agent-browser install` |
+| **Scrapling** (`[fetchers]`) | 데이터 수집 (HTTP·브라우저, 셀렉터 자가치유). fetcher 런타임(curl_cffi/playwright/patchright 등)이 함께 들어옴 | `pip install -r requirements.txt` |
+| **Chromium** | 브라우저 렌더링(DynamicFetcher/StealthyFetcher) | `scrapling install` (playwright Chromium 1회 다운로드) |
+| **openpyxl** | 엑셀(.xlsx) 출력 | (requirements.txt에 포함) |
+| **agent-browser** | **표준 정찰 도구** — 구조 파악·네트워크 감시 (양 host 공통) | `npm.cmd install -g agent-browser` + `agent-browser.cmd install` |
 | **Chrome / Chrome for Testing** | Akamai 등 고급 안티봇 대응 (CDP) | `agent-browser install` 이 함께 처리 |
 
 ---
