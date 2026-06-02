@@ -6,6 +6,22 @@
 
 ---
 
+## 최초 환경 셋업 (클론 직후 1회, 수집 전 확인)
+
+수집 시도 전에 의존성이 설치돼 있는지 확인한다. 미설치면 실행:
+
+```bash
+pip install -r requirements.txt    # scrapling, openpyxl, playwright, pytest
+scrapling install                  # Scrapling용 브라우저(Camoufox/Chromium)
+playwright install chromium        # Playwright용 Chromium
+npm install -g agent-browser && agent-browser install   # 정찰용 (PowerShell 정책 오류 시 agent-browser.cmd)
+python scripts/smoke_test.py       # 검증 — 전부 [PASS]면 정상
+```
+
+전체 가이드(비개발자용 포함)는 `README.md`의 "처음 설치하기" 참조.
+
+---
+
 ## ★ 절대 규칙 0: 도메인 히스토리 우선 (모든 수집의 시작)
 
 새 수집 요청을 받으면 **정찰하기 전에 반드시** 이 두 가지를 먼저 본다:

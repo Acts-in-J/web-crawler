@@ -2,6 +2,19 @@
 
 이 레포는 URL과 수집 항목을 받아 사이트를 정찰·대량수집하고 엑셀로 내보내는 범용 웹 크롤링 에이전트다. **`CLAUDE.md`와 `.codex/skills/web-crawler/SKILL.md`가 *어떻게*에 대한 SSOT다.** 이 파일은 Codex용 **실행 계약**이다 — Claude Code는 Skill 런타임으로 같은 규율을 자동 적용받지만, Codex는 Skill 런타임이 없으므로 이 파일이 대신 강제한다.
 
+## 최초 환경 셋업 (클론 직후 1회)
+
+수집을 시도하기 전에 환경이 준비됐는지 확인한다. 미설치면 아래를 실행:
+
+```bash
+pip install -r requirements.txt    # scrapling, openpyxl, playwright, pytest
+scrapling install                  # Scrapling용 브라우저(Camoufox/Chromium)
+playwright install chromium        # Codex 정찰용 Chromium
+python scripts/smoke_test.py       # 검증: Fetcher/StealthyFetcher/DynamicFetcher 전부 [PASS]면 정상
+```
+
+Codex는 `agent-browser`가 필요 없다(정찰은 `DynamicFetcher`/Playwright). 전체 셋업 가이드는 `README.md`의 "처음 설치하기" 참조.
+
 ## 스킬 소스 (생성 미러)
 
 - **`.claude/skills/`가 정본. `.codex/skills/`는 생성 미러**다 — 텍스트 안의 `.claude/skills` 경로만 `.codex/skills`로 치환된 것 외엔 byte-identical.

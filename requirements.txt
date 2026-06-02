@@ -1,0 +1,10 @@
+# 범용 웹 크롤링 에이전트 — Python 의존성
+# 설치: pip install -r requirements.txt
+# 그 다음 브라우저 바이너리도 받아야 함 (requirements.txt로는 안 됨):
+#   scrapling install          # Scrapling용 브라우저(Camoufox/Chromium)
+#   playwright install chromium # Playwright용 Chromium
+
+scrapling      # 수집 엔진 — Fetcher/StealthyFetcher/DynamicFetcher/Spider, 셀렉터 자가치유
+openpyxl       # 엑셀(.xlsx) 출력
+playwright     # 브라우저 렌더링 — Scrapling 백엔드 + Codex 정찰용 sync_api 인터셉트
+pytest         # 테스트 실행 (개발용)
