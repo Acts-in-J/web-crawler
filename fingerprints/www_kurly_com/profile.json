@@ -1,0 +1,19 @@
+{
+  "domain": "www.kurly.com",
+  "fetcher_type": "DynamicFetcher",
+  "antibot_type": "none",
+  "antibot_strategy": "none",
+  "site_type": "csr",
+  "selectors": {
+    "product_anchor": "a[href^=\"/goods/\"]",
+    "product_card_alt": "[class*=\"ProductCard\"], [class*=\"product-card\"], [data-testid*=\"product\"]"
+  },
+  "pagination": {
+    "type": "url_path",
+    "url_template": "https://www.kurly.com/categories/{category_id}",
+    "notes": "카테고리당 상품은 CSR로 로드되므로 network_idle=True 필요. infinite scroll/lazy load 가능성 있음 — 스크롤로 추가 로드"
+  },
+  "api_endpoints": [],
+  "notes": "Next.js SPA — DynamicFetcher().fetch(url, network_idle=True) 우선. 상품 카드 class name이 자주 빌드 해시로 바뀌므로 (`a[href^=\"/goods/\"]` 같은) 안정 셀렉터 우선 사용, ProductCard/product-card는 fallback. StealthyFetcher가 2차 폴백. Kurly 내부 API(/api/...) 시도해봤지만 CSR 토큰 필요해서 직접 호출보다는 렌더된 DOM 파싱이 빠름.",
+  "last_used": "2026-03-25"
+}

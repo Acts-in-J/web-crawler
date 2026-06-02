@@ -1,0 +1,9 @@
+{
+  "domain": "brand.naver.com",
+  "fetcher_type": "CDP",
+  "site_type": "naver_antibot",
+  "api_endpoints": [
+    "POST /n/v1/contents/reviews/query-pages"
+  ],
+  "notes": "requires Chrome CDP (headed). reviews api = {checkoutMerchantNo,originProductNo,page,pageSize,reviewSearchSortType}. fields: reviewScore, reviewContent, createDate, maskedWriterId, productOptionContent"
+}

@@ -1,0 +1,43 @@
+{
+  "domain": "coupang.com",
+  "fetcher_type": "chrome_cdp",
+  "antibot_type": "akamai",
+  "antibot_strategy": "chrome_cdp",
+  "site_type": "akamai",
+  "selectors": {},
+  "pagination": {
+    "type": "url_param",
+    "param": "page",
+    "per_page_param": "per_page",
+    "default_per_page": 10
+  },
+  "api_endpoints": [
+    {
+      "url": "https://www.coupang.com/vp/product/reviews",
+      "method": "GET",
+      "response_type": "text/html",
+      "params": {
+        "productId": "<상품 PRODUCT_ID>",
+        "itemId": "<ITEM_ID>",
+        "vendorItemId": "<VENDOR_ITEM_ID>",
+        "page": "<1..N>",
+        "per_page": 10,
+        "orderType": "REVIEW_RANKING"
+      },
+      "headers": {
+        "accept": "text/html,application/xhtml+xml",
+        "x-requested-with": "XMLHttpRequest"
+      },
+      "field_mapping": {
+        "작성자": ".sdp-review__article__list__info__user__name",
+        "평점": ".sdp-review__article__list__info__product-info__star-orange (data-rating)",
+        "리뷰내용": ".sdp-review__article__list__review__content",
+        "작성일": ".sdp-review__article__list__info__product-info__reg-date",
+        "구매옵션": ".sdp-review__article__list__info__product-info__name",
+        "도움수": ".js_reviewArticleHelpfulCount"
+      }
+    }
+  ],
+  "notes": "Akamai WAF로 보호되므로 FETCHER_CHAIN(Fetcher/Stealthy/Dynamic) 금지 → 반드시 launch_chrome_cdp()로 headed Chrome 띄우고 page.evaluate() 안에서 fetch + DOMParser로 HTML 응답 파싱. 리뷰 API는 JSON 아니라 HTML 조각 반환. 봇 탐지 트리거 방지를 위해 페이지간 200~500ms 간격, 한 번에 5페이지 단위 배치 처리. 상품 페이지는 PRODUCT_ID/ITEM_ID/VENDOR_ITEM_ID 3개 모두 필수.",
+  "last_used": "2026-03-31"
+}

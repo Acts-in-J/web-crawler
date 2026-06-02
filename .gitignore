@@ -1,0 +1,27 @@
+# Output (raw crawl results — large/PII, never commit)
+output/
+crawl_data/
+
+# Fingerprints — ignore everything by default, whitelist only shareable recipe metadata
+fingerprints/**
+!fingerprints/
+!fingerprints/*/
+!fingerprints/*/profile.json
+!fingerprints/*/recipe.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Auth/cookies/tokens — never commit (overrides whitelists above)
+naver_auth.json
+**/cookies*.json
+**/auth*.json
+**/*token*.json
+**/*secret*
+.DS_Store

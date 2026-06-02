@@ -1,0 +1,65 @@
+"""scripts/domain_profile.py — 도메인별 크롤링 프로필 저장/재사용
+
+프로필 스키마:
+{
+    "domain": "example.com",
+    "fetcher_type": "FetcherSession|Fetcher|StealthyFetcher|DynamicFetcher|chrome_cdp",
+    "antibot_type": "none|cloudflare|akamai|other",   # 봇 차단 유형
+    "antibot_strategy": "none|stealthy|chrome_cdp",    # 대응 전략
+    "selectors": {"필드": "셀렉터"},
+    "pagination": {"type": "url_param|next_button|infinite_scroll"},
+    "api_endpoints": [{"url": "", "method": "GET", "params": {}, "field_mapping": {}}],
+    "notes": "사이트 특이사항 메모",
+    "last_used": "2026-03-09",
+}
+"""
+import json
+import os
+from utils import sanitize_filename
+
+
+# 알려진 안티봇 유형별 추천 전략
+ANTIBOT_STRATEGIES = {
+    "akamai": "chrome_cdp",
+    "cloudflare": "stealthy",
+    "none": "none",
+}
+
+
+class DomainProfile:
+    """도메인별 사이트 프로필을 관리."""
+
+    def __init__(self, base_dir: str = "./fingerprints"):
+        self.base_dir = base_dir
+
+    def save(self, domain: str, profile: dict):
+        domain_dir = os.path.join(self.base_dir, sanitize_filename(domain))
+        os.makedirs(domain_dir, exist_ok=True)
+        filepath = os.path.join(domain_dir, "profile.json")
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(profile, f, ensure_ascii=False, indent=2)
+
+    def load(self, domain: str) -> dict | None:
+        filepath = os.path.join(self.base_dir, sanitize_filename(domain), "profile.json")
+        if not os.path.exists(filepath):
+            return None
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def exists(self, domain: str) -> bool:
+        filepath = os.path.join(self.base_dir, sanitize_filename(domain), "profile.json")
+        return os.path.exists(filepath)
+
+    def get_antibot_strategy(self, domain: str) -> str:
+        """도메인의 안티봇 대응 전략 반환. 프로필 없으면 'none'."""
+        profile = self.load(domain)
+        if not profile:
+            return "none"
+        return profile.get("antibot_strategy", "none")
+
+    def is_akamai(self, domain: str) -> bool:
+        """해당 도메인이 Akamai 보호 사이트인지 확인."""
+        profile = self.load(domain)
+        if not profile:
+            return False
+        return profile.get("antibot_type") == "akamai"
