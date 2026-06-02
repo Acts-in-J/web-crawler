@@ -33,7 +33,7 @@ python scripts/smoke_test.py       # 검증: Fetcher/StealthyFetcher/DynamicFetc
 
 ## 정찰 도구 — 양 host 공통
 
-- 정찰(Step 2)의 **1순위 도구는 `agent-browser`**다. 이것은 vercel-labs의 독립 CLI(`npm install -g agent-browser`)이므로 **Claude Code·Codex 모두에서 동일하게 쓴다** — Claude 전용이 아니다. 셋업돼 있으면 Codex도 그대로 사용한다. (Codex에서 명령 사용법이 필요하면 agent-browser의 스킬을 `~/.codex/skills/`에 설치해두면 된다.)
+- 정찰(Step 2)의 **1순위 도구는 `agent-browser`**다. 이것은 vercel-labs의 독립 CLI(`npm install -g agent-browser`)이므로 **Claude Code·Codex 모두에서 동일하게 쓴다** — Claude 전용이 아니다. 셋업돼 있으면 Codex도 그대로 사용한다. 사용법은 양 host 모두 정찰 시작 전 `agent-browser skills get core --full`로 로드한다 — CLI에 내장돼 항상 버전 일치(파일 복사 불필요).
 - agent-browser를 못 쓰는 환경(미설치, 또는 브라우저 실행이 막힌 제한된 Codex 클라우드 샌드박스)에서는 **Scrapling `DynamicFetcher`** 또는 **Playwright `sync_api` 스크립트**(`page.on("response")`로 XHR/API 캡처)로 정찰을 대체한다. 둘 다 Python 의존성에 포함돼 항상 가능. (SKILL.md 규칙 1 예외와 동일한 Playwright 사용.)
 - **수집·프로필·엑셀·CDP는 양 host 완전 동일**: 수집(Scrapling), 도메인 프로필(`scripts/domain_profile.py`), 엑셀(`scripts/export_excel.py`), Akamai/고급 WAF 대응(`scripts/chrome_cdp.py`), 진행 체크포인트(`scripts/progress.py`).
 

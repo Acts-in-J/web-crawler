@@ -83,7 +83,7 @@ agent-browser install              # Chrome 셋업 (없으면 Chrome for Testing
 
 - Windows PowerShell에서 **실행 정책 오류**가 나면 `agent-browser` 대신 **`agent-browser.cmd`** 를 쓰세요.
 - 참고: [github.com/vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser)
-- > **Claude Code·Codex 모두 사용합니다.** agent-browser는 독립 CLI라 양쪽 host에서 동일하게 정찰에 씁니다. (Codex에서 더 잘 쓰려면 agent-browser의 스킬을 `~/.codex/skills/`에 설치해두면 됩니다.) 설치가 안 됐거나 브라우저 실행이 막힌 환경이라면 정찰을 Playwright / Scrapling `DynamicFetcher`로 대체합니다.
+- > **Claude Code·Codex 모두 사용합니다.** agent-browser는 독립 CLI라 양쪽 host에서 동일하게 정찰에 씁니다. (사용법은 정찰 전 `agent-browser skills get core --full`로 불러오면 됩니다 — CLI에 내장돼 항상 버전 일치.) 설치가 안 됐거나 브라우저 실행이 막힌 환경이라면 정찰을 Playwright / Scrapling `DynamicFetcher`로 대체합니다.
 
 **3단계 — 설치 확인**
 

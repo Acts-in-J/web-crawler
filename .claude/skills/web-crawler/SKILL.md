@@ -73,6 +73,8 @@ profile_mgr.save(domain, {
 
 ## Step 2: 정찰 (agent-browser)
 
+> **시작 전 (양 host 공통)**: `agent-browser skills get core --full`을 실행해 agent-browser 사용법(snapshot-and-ref 워크플로우, 네트워크 캡처 등)을 로드한다. 사용법은 CLI에 내장돼 항상 버전 일치하며, Claude Code·Codex 모두 이 한 줄로 동일하게 준비된다.
+
 ### 정찰 규칙
 - agent-browser 접근 **최대 2회** 시도
 - 2회 실패 시 Chrome CDP 전략으로 전환
