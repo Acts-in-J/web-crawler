@@ -9,11 +9,12 @@
 ```bash
 pip install -r requirements.txt    # scrapling, openpyxl, playwright, pytest
 scrapling install                  # Scrapling용 브라우저(Camoufox/Chromium)
-playwright install chromium        # Codex 정찰용 Chromium
+playwright install chromium        # 정찰/렌더링용 Chromium
+npm install -g agent-browser && agent-browser install   # 정찰 CLI (양 host 공통; PowerShell 정책 오류 시 agent-browser.cmd)
 python scripts/smoke_test.py       # 검증: Fetcher/StealthyFetcher/DynamicFetcher 전부 [PASS]면 정상
 ```
 
-Codex는 `agent-browser`가 필요 없다(정찰은 `DynamicFetcher`/Playwright). 전체 셋업 가이드는 `README.md`의 "처음 설치하기" 참조.
+`agent-browser`는 독립 CLI라 Codex에서도 동일하게 쓴다. 설치/실행이 막힌 제한된 환경이면 정찰을 Playwright/`DynamicFetcher`로 대체. 전체 셋업 가이드는 `README.md`의 "처음 설치하기" 참조.
 
 ## 스킬 소스 (생성 미러)
 
@@ -30,11 +31,11 @@ Codex는 `agent-browser`가 필요 없다(정찰은 `DynamicFetcher`/Playwright)
 
 3. **프로필 게이트.** Step 1-A(프로필 있으면 load) ↔ Step 5-A(수집 성공 직후 save/갱신, `notes` 필드 필수). Step 5-A를 빠뜨리면 수집 결과가 살아있어도 **"파이프라인 미완료"**로 보고한다.
 
-## Codex host 차이 — 정찰 도구
+## 정찰 도구 — 양 host 공통
 
-- `agent-browser`는 **Claude Code 전용** 정찰 도구다. Codex에는 없다.
-- Codex에서 정찰(Step 2)은 **Scrapling `DynamicFetcher`** 또는 **Playwright `sync_api` 스크립트**(`page.on("response")`로 XHR/API 응답 캡처)로 수행한다 — 구조 파악·API 식별·셀렉터 추출·네트워크 감시를 이 방식으로. (SKILL.md 규칙 1 예외와 동일한 Playwright 사용.)
-- **그 외는 양 host 동일**: 수집(Scrapling), 도메인 프로필(`scripts/domain_profile.py`), 엑셀 출력(`scripts/export_excel.py`), Akamai/고급 WAF 대응(`scripts/chrome_cdp.py`), 진행 체크포인트(`scripts/progress.py`).
+- 정찰(Step 2)의 **1순위 도구는 `agent-browser`**다. 이것은 vercel-labs의 독립 CLI(`npm install -g agent-browser`)이므로 **Claude Code·Codex 모두에서 동일하게 쓴다** — Claude 전용이 아니다. 셋업돼 있으면 Codex도 그대로 사용한다. (Codex에서 명령 사용법이 필요하면 agent-browser의 스킬을 `~/.codex/skills/`에 설치해두면 된다.)
+- agent-browser를 못 쓰는 환경(미설치, 또는 브라우저 실행이 막힌 제한된 Codex 클라우드 샌드박스)에서는 **Scrapling `DynamicFetcher`** 또는 **Playwright `sync_api` 스크립트**(`page.on("response")`로 XHR/API 캡처)로 정찰을 대체한다. 둘 다 Python 의존성에 포함돼 항상 가능. (SKILL.md 규칙 1 예외와 동일한 Playwright 사용.)
+- **수집·프로필·엑셀·CDP는 양 host 완전 동일**: 수집(Scrapling), 도메인 프로필(`scripts/domain_profile.py`), 엑셀(`scripts/export_excel.py`), Akamai/고급 WAF 대응(`scripts/chrome_cdp.py`), 진행 체크포인트(`scripts/progress.py`).
 
 ## 안전 — 하드룰 (위반 금지)
 

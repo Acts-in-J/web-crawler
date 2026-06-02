@@ -83,7 +83,7 @@ agent-browser install              # Chrome 셋업 (없으면 Chrome for Testing
 
 - Windows PowerShell에서 **실행 정책 오류**가 나면 `agent-browser` 대신 **`agent-browser.cmd`** 를 쓰세요.
 - 참고: [github.com/vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser)
-- > **Codex 사용자는 이 단계를 건너뛰어도 됩니다.** Codex에는 agent-browser가 없어, 정찰을 Playwright / Scrapling `DynamicFetcher`로 하기 때문입니다. (아래 [Dual-host](#dual-host-claude-code--codex) 참조)
+- > **Claude Code·Codex 모두 사용합니다.** agent-browser는 독립 CLI라 양쪽 host에서 동일하게 정찰에 씁니다. (Codex에서 더 잘 쓰려면 agent-browser의 스킬을 `~/.codex/skills/`에 설치해두면 됩니다.) 설치가 안 됐거나 브라우저 실행이 막힌 환경이라면 정찰을 Playwright / Scrapling `DynamicFetcher`로 대체합니다. (아래 [Dual-host](#dual-host-claude-code--codex) 참조)
 
 **3단계 — 설치 확인**
 
@@ -99,7 +99,7 @@ pytest scripts/ -q                 # (선택) 단위 테스트 실행
 | **Scrapling** | 데이터 수집 (HTTP·브라우저, 셀렉터 자가치유) | `pip install -r requirements.txt` + `scrapling install` |
 | **Playwright** | 브라우저 렌더링 (Scrapling 백엔드 / Codex 정찰) | (위 pip에 포함) + `playwright install chromium` |
 | **openpyxl** | 엑셀(.xlsx) 출력 | (위 pip에 포함) |
-| **agent-browser** | 정찰 — 구조 파악·네트워크 감시 (Claude Code) | `npm install -g agent-browser` + `agent-browser install` |
+| **agent-browser** | 정찰 — 구조 파악·네트워크 감시 (양 host 공통) | `npm install -g agent-browser` + `agent-browser install` |
 | **Chrome / Chrome for Testing** | Akamai 등 고급 안티봇 대응 (CDP) | `agent-browser install` 이 함께 처리 |
 
 ---
@@ -173,7 +173,7 @@ python scripts/sync_codex_mirror.py          # 미러 재생성
 python scripts/sync_codex_mirror.py --check   # .claude와 어긋났으면 exit 1
 ```
 
-> Codex에는 `agent-browser`가 없습니다. 정찰(Step 2)은 Scrapling `DynamicFetcher` 또는 Playwright `sync_api` 스크립트로 수행합니다. 수집·프로필·엑셀은 양 host 동일합니다.
+> 정찰(Step 2)은 양 host 모두 **`agent-browser`(독립 CLI)를 1순위**로 씁니다 — Claude 전용이 아닙니다. 설치돼 있지 않거나 브라우저 실행이 막힌 환경에서는 Scrapling `DynamicFetcher` / Playwright `sync_api`로 대체합니다. 수집·프로필·엑셀은 양 host 동일합니다.
 
 ---
 
