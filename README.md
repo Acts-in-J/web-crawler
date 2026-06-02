@@ -87,9 +87,26 @@ git ls-files --others --exclude-standard fingerprints/   # 추적 후보 확인
 git check-ignore -v <path>                                # 차단 패턴 확인
 ```
 
+## Dual-host: Claude Code · Codex
+
+이 레포는 **Claude Code와 Codex(codex CLI) 양쪽**에서 동작한다.
+
+- **Claude Code**: `.claude/skills/web-crawler/`를 Skill 런타임이 자동 로드.
+- **Codex**: Skill 런타임이 없으므로 루트 `AGENTS.md`가 실행 계약 역할을 한다 — 크롤링 요청을 `.codex/skills/web-crawler/`(생성 미러)로 라우팅하고 동일한 워크플로우·안전 게이트를 강제.
+
+`.codex/skills/`는 `.claude/skills/`의 **생성 미러**다. 스킬을 고쳤으면 직접 `.codex/`를 건드리지 말고 미러를 재생성한다:
+
+```bash
+python scripts/sync_codex_mirror.py          # 미러 재생성
+python scripts/sync_codex_mirror.py --check   # .claude와 어긋났으면 exit 1
+```
+
+> Codex에는 `agent-browser`가 없다. 정찰(Step 2)은 Scrapling `DynamicFetcher` 또는 Playwright `sync_api` 스크립트로 수행한다. 수집·프로필·엑셀은 양 host 동일.
+
 ## 참고 문서
 
-- `CLAUDE.md` — 메인 에이전트 지시서
+- `CLAUDE.md` — 메인 에이전트 지시서 (양 host SSOT)
+- `AGENTS.md` — Codex 실행 계약 (dual-host 라우팅)
 - `.claude/skills/web-crawler/SKILL.md` — 워크플로우 (Step 1-A/5-A 게이트 포함)
 - `.claude/skills/web-crawler/references/` — fetcher-patterns / antibot-strategies / troubleshooting
 - `blueprint-web-crawler.md` — 시스템 설계서
