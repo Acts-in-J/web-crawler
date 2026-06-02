@@ -1,16 +1,20 @@
 <#
-  scripts/setup.ps1 — Windows 한 방 설치 (venv 생성 + bootstrap 실행)
+  scripts/setup.ps1 - Windows one-shot setup (create venv + run bootstrap)
 
-  실행 (PowerShell 실행 정책 우회 — 이 한 줄이 표준):
+  Run (execution-policy bypass is the standard form):
     powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 
-  옵션:
-    -CoreOnly      # agent-browser 제외하고 core만 (표준 설치는 full)
-    -SkipBrowser   # 브라우저가 이미 있는 환경에서 빠른 재검증
-    -Force         # 이미 설치돼 있어도 강제 재설치
+  Options:
+    -CoreOnly      # core only, skip agent-browser (standard install is full)
+    -SkipBrowser   # skip browser install (env that already has Chromium)
+    -Force         # reinstall even if already present
 
-  npm / agent-browser 는 PowerShell .ps1 실행정책 문제를 피하려고 bootstrap.py 안에서
-  npm.cmd / agent-browser.cmd 로 호출한다.
+  npm / agent-browser are invoked from bootstrap.py as npm.cmd / agent-browser.cmd
+  to avoid PowerShell .ps1 execution-policy errors.
+
+  NOTE: messages here are ASCII on purpose. Windows PowerShell 5.1 reads a BOM-less
+  UTF-8 .ps1 as ANSI(cp949) and would garble non-ASCII text. Detailed Korean guidance
+  lives in bootstrap.py / preflight.py (Python renders Unicode correctly in a console).
 #>
 param(
   [switch]$CoreOnly,
@@ -18,35 +22,35 @@ param(
   [switch]$Force
 )
 $ErrorActionPreference = "Stop"
-$repo = Split-Path -Parent $PSScriptRoot   # scripts/ 의 부모 = repo 루트
+$repo = Split-Path -Parent $PSScriptRoot   # parent of scripts/ = repo root
 Set-Location $repo
 
-Write-Host "=== web-crawler 설치 (Windows) ===" -ForegroundColor Cyan
+Write-Host "=== web-crawler setup (Windows) ===" -ForegroundColor Cyan
 
-# 1) python 런처 찾기
+# 1) find a python launcher
 $py = $null
 foreach ($c in @("py", "python")) {
   if (Get-Command $c -ErrorAction SilentlyContinue) { $py = $c; break }
 }
 if (-not $py) {
-  Write-Host "[FAIL] Python을 찾을 수 없음. https://www.python.org/downloads/ 에서 설치 후 다시 실행." -ForegroundColor Red
+  Write-Host "[FAIL] Python not found. Install from https://www.python.org/downloads/ and re-run." -ForegroundColor Red
   exit 2
 }
 
-# 2) venv (없으면 생성 — 최초 1회)
+# 2) venv (create if missing - first time only)
 if (-not (Test-Path ".venv")) {
-  Write-Host "[*] .venv 생성 (최초 1회, 수 초)..." -ForegroundColor Yellow
+  Write-Host "[*] creating .venv (first time, a few seconds)..." -ForegroundColor Yellow
   if ($py -eq "py") { & py -3 -m venv .venv } else { & python -m venv .venv }
 } else {
-  Write-Host "[SKIP] .venv 이미 존재" -ForegroundColor DarkGray
+  Write-Host "[SKIP] .venv already exists" -ForegroundColor DarkGray
 }
 $venvPy = Join-Path $repo ".venv\Scripts\python.exe"
 if (-not (Test-Path $venvPy)) {
-  Write-Host "[FAIL] venv python 없음: $venvPy" -ForegroundColor Red
+  Write-Host "[FAIL] venv python missing: $venvPy" -ForegroundColor Red
   exit 2
 }
 
-# 3) bootstrap 실행 (deps + browser + agent-browser + preflight)
+# 3) run bootstrap (deps + browser + agent-browser + preflight)
 $bootArgs = @("scripts\bootstrap.py")
 if ($CoreOnly)    { $bootArgs += "--core-only" }
 if ($SkipBrowser) { $bootArgs += "--skip-browser" }
@@ -58,10 +62,10 @@ $code = $LASTEXITCODE
 
 Write-Host ""
 if ($code -eq 0) {
-  Write-Host "[OK] 설치 완료. 새 PowerShell에서 venv 활성화:  .\.venv\Scripts\Activate.ps1" -ForegroundColor Green
+  Write-Host "[OK] setup complete. Activate venv in a new PowerShell:  .\.venv\Scripts\Activate.ps1" -ForegroundColor Green
 } elseif ($code -eq 1) {
-  Write-Host "[INCOMPLETE] core는 준비됨, agent-browser 미완료 → 전체 설치 미완료. 위 '다음에 실행할 명령' 참고." -ForegroundColor Yellow
+  Write-Host "[INCOMPLETE] core ready, agent-browser unfinished -> install not complete. See 'next commands' above." -ForegroundColor Yellow
 } else {
-  Write-Host "[FAIL] core 설치 미완료 (exit $code). 위 '다음에 실행할 명령'을 실행하세요." -ForegroundColor Red
+  Write-Host "[FAIL] core setup incomplete (exit $code). Run the 'next commands' shown above." -ForegroundColor Red
 }
 exit $code
