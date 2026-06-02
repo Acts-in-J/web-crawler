@@ -83,7 +83,7 @@ agent-browser install              # Chrome 셋업 (없으면 Chrome for Testing
 
 - Windows PowerShell에서 **실행 정책 오류**가 나면 `agent-browser` 대신 **`agent-browser.cmd`** 를 쓰세요.
 - 참고: [github.com/vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser)
-- > **Claude Code·Codex 모두 사용합니다.** agent-browser는 독립 CLI라 양쪽 host에서 동일하게 정찰에 씁니다. (Codex에서 더 잘 쓰려면 agent-browser의 스킬을 `~/.codex/skills/`에 설치해두면 됩니다.) 설치가 안 됐거나 브라우저 실행이 막힌 환경이라면 정찰을 Playwright / Scrapling `DynamicFetcher`로 대체합니다. (아래 [Dual-host](#dual-host-claude-code--codex) 참조)
+- > **Claude Code·Codex 모두 사용합니다.** agent-browser는 독립 CLI라 양쪽 host에서 동일하게 정찰에 씁니다. (Codex에서 더 잘 쓰려면 agent-browser의 스킬을 `~/.codex/skills/`에 설치해두면 됩니다.) 설치가 안 됐거나 브라우저 실행이 막힌 환경이라면 정찰을 Playwright / Scrapling `DynamicFetcher`로 대체합니다.
 
 **3단계 — 설치 확인**
 
@@ -159,24 +159,6 @@ JS 렌더링 필요?   → DynamicFetcher (브라우저 렌더링)
 
 ---
 
-## Dual-host: Claude Code · Codex
-
-이 레포는 **Claude Code와 Codex(codex CLI) 양쪽**에서 동작합니다.
-
-- **Claude Code**: `.claude/skills/web-crawler/`를 Skill 런타임이 자동 로드.
-- **Codex**: Skill 런타임이 없으므로 루트 `AGENTS.md`가 실행 계약 역할 — 크롤링 요청을 `.codex/skills/web-crawler/`(생성 미러)로 라우팅하고 동일한 워크플로우·안전 게이트를 강제.
-
-`.codex/skills/`는 `.claude/skills/`의 **생성 미러**입니다. 스킬을 고쳤으면 `.codex/`를 직접 건드리지 말고 미러를 재생성하세요:
-
-```bash
-python scripts/sync_codex_mirror.py          # 미러 재생성
-python scripts/sync_codex_mirror.py --check   # .claude와 어긋났으면 exit 1
-```
-
-> 정찰(Step 2)은 양 host 모두 **`agent-browser`(독립 CLI)를 1순위**로 씁니다 — Claude 전용이 아닙니다. 설치돼 있지 않거나 브라우저 실행이 막힌 환경에서는 Scrapling `DynamicFetcher` / Playwright `sync_api`로 대체합니다. 수집·프로필·엑셀은 양 host 동일합니다.
-
----
-
 ## 출력 구조
 
 ```
@@ -214,7 +196,7 @@ git check-ignore -v <path>           # 어떤 패턴에 막혔는지 확인
 ## 참고 문서
 
 - `CLAUDE.md` — 메인 에이전트 지시서 (양 host SSOT)
-- `AGENTS.md` — Codex 실행 계약 (dual-host 라우팅 + 최초 셋업)
+- `AGENTS.md` — Codex 실행 계약 (최초 셋업 포함)
 - `.claude/skills/web-crawler/SKILL.md` — 워크플로우 (Step 1-A/5-A 게이트 포함)
 - `.claude/skills/web-crawler/references/` — fetcher-patterns / antibot-strategies / troubleshooting
 - `blueprint-web-crawler.md` — 시스템 설계서
