@@ -16,16 +16,21 @@ python -m venv .venv && . .venv/bin/activate && python scripts/bootstrap.py
 ```
 
 단계: ① Python deps → ② 브라우저(Chromium) → ③ agent-browser(표준 정찰 도구) → ④ preflight 검증.
-실패하면 "다음에 실행할 정확한 명령"이 출력된다. 모드: 기본 full(표준) / `--core-only`(agent-browser 제외) / `--skip-browser`.
+실패하면 "다음에 실행할 정확한 명령"이 출력된다. 모드: 기본 full(표준) / `--core-only`(agent-browser 제외) / `--skip-browser` / `-VerbosePip`(pip 상세 로그).
+
+**`py` 런처 깨짐 자동 처리**: `setup.ps1`은 `py -3`/`python`/`python3`를 실제 실행해 3.10+를 확인하고 성공하는 쪽으로 venv를 만든다. `py -3`가 `No installed Python found!`로 실패하면 자동으로 `python`으로 fallback한다. 그래도 venv가 안 생기면 직접: `python -m venv .venv` → `.\.venv\Scripts\python.exe scripts\bootstrap.py`.
 
 **수동/디버깅 시 실제 동작하는 명령 (Windows)**:
 ```powershell
-pip install -r requirements.txt          # scrapling[fetchers] 포함 — fetcher 런타임 일괄
+python --version ; py -3 --version       # 어느 쪽이 동작하는지 먼저 확인 (py 깨졌으면 python 사용)
+python -m venv .venv ; .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt --progress-bar off    # 멈춘 듯하면 끝에 -v 추가
 scrapling install                        # Chromium 1회 설치 (내부에서 playwright install chromium 수행 — 따로 또 X)
 npm.cmd install -g agent-browser ; agent-browser.cmd install   # PowerShell은 .cmd 사용
 python scripts\preflight.py              # 검증: core / agent-browser 분리 PASS·WARN·FAIL
 ```
 - `python -m scrapling`은 동작 안 함 → `scrapling install`(venv 활성화) 또는 `.\.venv\Scripts\scrapling.exe install`.
+- pip이 진행 없이 멈춘 듯하면 정상(대용량 휠 다운로드). 진행 확인: `.\.venv\Scripts\python.exe -m pip install -r requirements.txt --progress-bar off -v`.
 - 검증은 `scripts/preflight.py`가 담당: **core(Python/Scrapling/Playwright)**와 **agent-browser**를 분리 보고. core 통과·agent-browser 실패면 "전체 설치 미완료"(종료코드 1). 전체 가이드는 `README.md` "처음 설치하기".
 
 ## 스킬 소스 (생성 미러)

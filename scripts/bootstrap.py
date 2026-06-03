@@ -52,6 +52,15 @@ def run(cmd):
     return subprocess.run(cmd)
 
 
+def _py_disp():
+    """디버그 명령에 쓸 보기 좋은 python 경로 (repo 안 venv면 상대경로)."""
+    try:
+        rel = Path(PY).relative_to(REPO)
+        return (".\\" + str(rel)) if IS_WIN else ("./" + str(rel))
+    except ValueError:
+        return PY
+
+
 # ---------------- 상태 점검 ----------------
 def py_deps_ready():
     try:
@@ -110,16 +119,22 @@ def agent_browser_ready():
 
 
 # ---------------- 단계 ----------------
-def do_python_deps(force):
+def do_python_deps(force, verbose_pip):
     stage("1/4 Python deps")
     if not force and py_deps_ready():
         log("  [SKIP] 이미 설치됨 (scrapling[fetchers] 등 import 확인)")
         return True, None
-    log("  최초 1회는 수 분 걸릴 수 있음 (scrapling[fetchers]: playwright/patchright/curl_cffi 등 다운로드).")
     req = REPO / "requirements.txt"
-    r = run([PY, "-m", "pip", "install", "-r", str(req)])
+    debug = f"{_py_disp()} -m pip install -r requirements.txt --progress-bar off -v"
+    log("  최초 1회는 수 분 걸릴 수 있음 (scrapling[fetchers]: playwright/patchright/curl_cffi 등 휠 다운로드).")
+    log("  진행이 한동안 안 보여도 정상입니다(의존성 해석·대용량 다운로드 중). 상세 로그를 보려면 --verbose-pip.")
+    log(f"  지연/실패 시 직접 실행해 진행 확인:  {debug}")
+    cmd = [PY, "-m", "pip", "install", "-r", str(req), "--progress-bar", "off"]
+    if verbose_pip:
+        cmd.append("-v")
+    r = run(cmd)
     if r.returncode != 0:
-        return False, f'{PY} -m pip install -r "{req}"'
+        return False, debug
     return True, None
 
 
@@ -183,6 +198,7 @@ def main():
     ap.add_argument("--core-only", action="store_true", help="agent-browser 제외 (표준은 full)")
     ap.add_argument("--skip-browser", action="store_true", help="브라우저 설치 생략(이미 있는 환경)")
     ap.add_argument("--force", action="store_true", help="이미 있어도 강제 재설치")
+    ap.add_argument("--verbose-pip", action="store_true", help="pip 설치 시 상세 로그(-v) — 지연 시 진행 확인용")
     args = ap.parse_args()
 
     log("=== web-crawler 설치 부트스트랩 ===")
@@ -192,7 +208,7 @@ def main():
 
     results, times, nexts = {}, {}, []
     for key, fn in [
-        ("Python deps", lambda: do_python_deps(args.force)),
+        ("Python deps", lambda: do_python_deps(args.force, args.verbose_pip)),
         ("Browser deps", lambda: do_browser_deps(args.skip_browser, args.force)),
         ("agent-browser", lambda: do_agent_browser(args.core_only, args.force)),
     ]:

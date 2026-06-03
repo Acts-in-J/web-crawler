@@ -57,6 +57,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 python -m venv .venv && . .venv/bin/activate && python scripts/bootstrap.py
 ```
 
+> **`py` 런처가 깨져 있어도 자동 처리됩니다.** 일부 Windows에서는 `py -3`가 `No installed Python found!`로 실패합니다. `setup.ps1`은 `py -3`/`python`/`python3`를 **실제로 실행해 3.10+ 여부를 확인**하고, 성공하는 쪽으로 `.venv`를 만듭니다 — `py -3`가 실패하면 자동으로 `python`으로 fallback합니다.
+> pip 설치가 한동안 조용해 멈춘 듯 보이면 정상입니다(대용량 휠 다운로드). 진행 로그를 보려면 `-VerbosePip`(예: `... -File scripts\setup.ps1 -VerbosePip`).
+
 진행 단계: **① Python deps → ② 브라우저(Chromium) → ③ agent-browser → ④ preflight 검증.** 처음 한 번만 오래 걸리고(브라우저·패키지 다운로드), 이후엔 skip되어 빠릅니다.
 
 설치 모드:
@@ -78,9 +81,13 @@ python -m venv .venv && . .venv/bin/activate && python scripts/bootstrap.py
    macOS/Linux면 venv 만들고 `python scripts/bootstrap.py` 를 실행해.
    - 단계별(Python deps → 브라우저 → agent-browser → preflight)로 진행되고
      이미 된 단계는 skip돼. 어느 단계에서 막혔는지 보고해줘.
+   - venv가 안 만들어지면 `py -3 --version` 과 `python --version` 을 확인해.
+     `py -3`가 실패하면(`No installed Python found!`) `python -m venv .venv` 로 직접 만들고
+     이어서 `.\.venv\Scripts\python.exe scripts\bootstrap.py` 를 실행해.
    - PowerShell에서 npm/agent-browser 실행 정책 오류가 나면 npm.cmd / agent-browser.cmd 를 써.
    - 브라우저는 `scrapling install` 하나로 끝나(내부에서 playwright install chromium 수행).
      playwright install 을 또 돌리지 마.
+   - pip이 오래 멈춘 듯 보이면 `--verbose-pip`(setup.ps1은 `-VerbosePip`)로 진행 로그를 봐.
 
 2. 끝나면 `python scripts/preflight.py` 결과(PASS/WARN/FAIL)를 요약해줘.
    core(Python/Scrapling/Playwright)와 agent-browser를 구분해서, 막힌 단계와
@@ -93,7 +100,7 @@ Windows PowerShell 기준 — 실제 동작하는 명령입니다.
 
 ```powershell
 # 0) venv (최초 1회).  활성화가 막히면 새 세션을: powershell -ExecutionPolicy Bypass
-py -3 -m venv .venv
+py -3 -m venv .venv               # 실패하면(No installed Python found!) → python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
 # 1) Python 패키지 (scrapling[fetchers] + openpyxl + pytest)
@@ -115,6 +122,25 @@ python scripts\preflight.py
 - `scrapling install` 이 내부적으로 `playwright install chromium` 을 수행합니다. **`playwright install` 을 따로 또 돌리지 마세요**(같은 다운로드 반복 → 시간 낭비). 이미 받았으면 즉시 끝납니다.
 - PowerShell에서 `npm` / `agent-browser` 가 실행 정책 오류면 **`npm.cmd` / `agent-browser.cmd`**.
 - 검증만 다시 하려면 `python scripts\preflight.py` (core만: `--core-only`).
+
+### 문제가 생기면 (Windows 디버깅)
+
+```powershell
+# 1) 어떤 python 이 동작하는지 확인 (py 런처가 깨졌을 수 있음)
+python --version       # 동작하면 이걸로 venv 생성
+py -3 --version        # 'No installed Python found!' 면 py 런처가 깨진 것
+
+# 2) py 가 안 되면 python 으로 직접 venv 생성 후 bootstrap
+python -m venv .venv
+.\.venv\Scripts\python.exe scripts\bootstrap.py
+
+# 3) pip 이 진행 없이 멈춘 듯 보일 때 — 진행 로그를 보며 직접 설치
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt --progress-bar off -v
+
+# 4) 최종 검증
+.\.venv\Scripts\python.exe scripts\preflight.py
+.\.venv\Scripts\python.exe -m pytest -q
+```
 
 > macOS / Linux는 위 명령에서 `py -3 -m venv` → `python3 -m venv`, 활성화 `. .venv/bin/activate`, `npm.cmd`→`npm`, `agent-browser.cmd`→`agent-browser` 로 바꾸면 동일합니다.
 
