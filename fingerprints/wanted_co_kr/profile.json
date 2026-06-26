@@ -17,19 +17,32 @@
         "country": "kr",
         "job_sort": "job.latest_order",
         "years": -1,
+        "locations": "all",
         "limit": 20,
-        "offset": 0,
-        "job_group_id": 518
+        "offset": 0
       },
       "field_mapping": {
         "회사명": "company.name",
         "포지션명": "position",
-        "지역": "address.location + address.district",
+        "지역": "address.location",
+        "상세주소": "address.full_location",
         "경력조건": "annual_from ~ annual_to",
-        "상세지역": "address.full_location"
+        "공고ID": "id"
+      }
+    },
+    {
+      "url": "https://www.wanted.co.kr/api/v4/jobs/{job_id}",
+      "method": "GET",
+      "params": {},
+      "field_mapping": {
+        "공고소개": "job.detail.intro",
+        "주요업무": "job.detail.main_tasks",
+        "자격요건": "job.detail.requirements",
+        "우대사항": "job.detail.preferred_points",
+        "혜택및복지": "job.detail.benefits"
       }
     }
   ],
-  "notes": "Next.js CSR site with public JSON API. No auth needed. job_group_id=518 is the general listing. No Akamai/Cloudflare.",
-  "last_used": "2026-03-25"
+  "notes": "Next.js CSR site with public JSON API. No auth needed. Use /api/v4/jobs with offset pagination for latest listing IDs, then /api/v4/jobs/{id} for detail.intro/main_tasks/requirements/preferred_points/benefits.",
+  "last_used": "2026-06-09"
 }

@@ -149,6 +149,10 @@ Step 0: fingerprints/<sanitized_domain>/profile.json 있나? ──Yes──→
    │         (재정찰 없이 Step 3로 점프, 단 last_used 3개월+이면 보강 정찰)
    No
    │
+Phase 0: 공인 우회로 있나? ──Yes──→ yt-dlp / RSS·Atom / oEmbed / Jina(r.jina.ai)
+   │  (profile 조회 직후, 정찰 전 — SKILL.md Step 1-B)   └→ 정찰 스킵, 바로 수집
+   No
+   │
 API 발견? ──Yes──→ FetcherSession (가장 빠르고 안정적)
    │
    No
@@ -156,6 +160,10 @@ API 발견? ──Yes──→ FetcherSession (가장 빠르고 안정적)
 안티봇 보호? ──Yes──→ 어떤 유형?
    │                    │
    │                    ├─ Cloudflare → StealthyFetcher
+   │                    │
+   │                    ├─ 기타 WAF(DataDome/PerimeterX/F5)·단순 403
+   │                    │     → curl_cffi 경량 그리드 먼저 (브라우저 앞 티어)
+   │                    │       실패 시 → StealthyFetcher → DynamicFetcher
    │                    │
    │                    └─ Akamai/고급 WAF → Chrome CDP 전략 (바로 이동)
    │                         ※ StealthyFetcher, curl_cffi 시도하지 않음
@@ -168,6 +176,8 @@ JS 렌더링 필요? ──Yes──→ DynamicFetcher (Playwright 브라우저 
    │
 Fetcher (기본 HTTP, 가장 가벼움)
 ```
+
+> **에스컬레이션 순서 = 가벼운 것부터:** 평문 Fetcher → **curl_cffi 그리드(브라우저 X)** → StealthyFetcher → DynamicFetcher → Chrome CDP. 단 Akamai는 예외(curl_cffi/Stealthy 건너뛰고 바로 CDP). 상세 코드는 `references/fetcher-patterns.md § F`, capability 판정 근거는 `references/antibot-strategies.md § WAF capability 라우팅`.
 
 > profile.json이 있는 도메인은 Akamai 탐지 시그널을 따로 안 봐도 `antibot_type` 필드로 즉시 판정된다 (예: coupang.com → akamai → chrome_cdp 직행).
 
@@ -210,7 +220,8 @@ chrome.exe --remote-debugging-port=9222 \
 
 수집 실패 시 자동으로 상위 Fetcher로 전환:
 ```
-Fetcher → StealthyFetcher → DynamicFetcher → agent-browser 폴백 + 사용자 보고
+Fetcher → curl_cffi 그리드 → StealthyFetcher → DynamicFetcher → agent-browser 폴백 + 사용자 보고
+   (Akamai는 이 체인을 건너뛰고 바로 Chrome CDP)
 ```
 
 ### 에러별 대응표
@@ -218,7 +229,8 @@ Fetcher → StealthyFetcher → DynamicFetcher → agent-browser 폴백 + 사용
 | 에러 유형 | 대응 |
 |----------|------|
 | HTTP 429 (Rate Limit) | 대기 시간 2배 증가 후 재시도. 누적 3회면 사용자 보고 |
-| HTTP 403 (Forbidden) | StealthyFetcher로 에스컬레이션. Akamai 시그널이면 즉시 Chrome CDP |
+| HTTP 403 (Forbidden) | curl_cffi 경량 그리드 먼저 → 실패 시 StealthyFetcher. Akamai 시그널이면 즉시 Chrome CDP |
+| 가짜 200 (소프트블록) | `detect_softblock()`로 감지 — 챌린지/빈 셸/`_abck=~-1~`. 수집 강행 금지, 상위 티어 에스컬레이션 |
 | Cloudflare Challenge | `StealthyFetcher(solve_cloudflare=True)` |
 | 셀렉터 매칭 실패 | `adaptive=True`로 자가 치유 시도. 재실패 시 정찰 재실행 |
 | 페이지 구조 완전 변경 | 정찰 재실행 → profile.json의 selectors 갱신 |

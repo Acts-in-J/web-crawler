@@ -1,0 +1,27 @@
+{
+  "domain": "www.gsmarena.com",
+  "fetcher_type": "Fetcher",
+  "antibot_type": "none",
+  "antibot_strategy": "none",
+  "site_type": "static",
+  "selectors": {
+    "list_item": "div.news-item",
+    "title": "h3::text",
+    "link": "a::attr(href)",
+    "excerpt": "p::text",
+    "date_list": "span.meta-item-time::text",
+    "body": "#review-body p",
+    "tags": "a[href*=\"sTag\"]::text",
+    "author": "span.reviewer a::text",
+    "date_detail": "span.dtreviewed::text"
+  },
+  "pagination": {
+    "type": "url_param",
+    "param": "iPage",
+    "start": 1,
+    "base_url": "https://www.gsmarena.com/news.php3"
+  },
+  "api_endpoints": [],
+  "notes": "정적 HTML SSR 사이트. 안티봇 없음. 뉴스 목록: news.php3?iPage=N (총 3646페이지). 각 항목은 div.news-item. 상세 본문은 #review-body p, 태그는 a[href*=sTag], 작성자 span.reviewer a, 날짜 span.dtreviewed. Fetcher 기본으로 정상 수집됨.",
+  "last_used": "2026-06-23"
+}

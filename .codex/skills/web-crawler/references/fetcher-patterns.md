@@ -9,10 +9,11 @@ SKILL.md Step 3에서 결정된 전략에 맞는 패턴을 선택하여 사용�
 2. [A: API 직접 수집 (FetcherSession)](#a-api-직접-수집)
 3. [B-1: 정적 HTML 수집 (Fetcher)](#b-1-정적-html-수집)
 4. [B-2: 동적/JS 사이트 수집 (DynamicFetcher)](#b-2-동적js-사이트-수집)
-5. [Infinite Scroll 패턴 (DynamicSession)](#infinite-scroll-패턴)
-6. [대규모 수집 (Spider)](#대규모-수집-spider)
-7. [Resume (이어서 수집)](#resume-이어서-수집)
-8. [데이터 정제](#스마트-데이터-정제)
+5. [F: curl_cffi 경량 그리드 (브라우저 전 돌파)](#f-curl_cffi-경량-그리드)
+6. [Infinite Scroll 패턴 (DynamicSession)](#infinite-scroll-패턴)
+7. [대규모 수집 (Spider)](#대규모-수집-spider)
+8. [Resume (이어서 수집)](#resume-이어서-수집)
+9. [데이터 정제](#스마트-데이터-정제)
 
 > 안티봇 관련 패턴(Akamai Chrome CDP, SPA 세션 인터셉트, Cloudflare)은
 > `antibot-strategies.md`에 별도 정리되어 있다.
@@ -25,17 +26,26 @@ SKILL.md Step 3에서 결정된 전략에 맞는 패턴을 선택하여 사용�
 
 ### FETCHER_CHAIN 에스컬레이션
 
-연속 실패 시 상위 Fetcher로 자동 전환한다. Akamai/SPA 세션 사이트에서는 이 체인을 사용하지 않는다.
+연속 실패 시 상위 Fetcher로 자동 전환한다. **순서는 "가벼운 것부터" — 평문 HTTP → curl_cffi 그리드(브라우저 X) → 브라우저 티어.** curl_cffi 그리드를 브라우저(Stealthy/Dynamic) **앞**에 둬서, 브라우저를 띄우기 전에 저비용으로 먼저 뚫어본다 (insane-search 차용). Akamai/SPA 세션 사이트에서는 이 체인을 사용하지 않는다.
 
 ```python
 from scrapling.fetchers import Fetcher, StealthyFetcher, DynamicFetcher
+from scrapling import Selector
+# fetch_via_grid 는 "F: curl_cffi 경량 그리드" 섹션 참조 (돌파 실패 시 (None, trace))
 
-# ⚠ Akamai 사이트 → antibot-strategies.md의 Chrome CDP 패턴 사용
-# ⚠ SPA 세션 사이트 → antibot-strategies.md의 Playwright 인터셉트 패턴 사용
+ITEM_SELECTOR = "<ITEM_SELECTOR>"
+
+def _grid_tier(url):
+    """curl_cffi 그리드 — 돌파 성공 시 Selector, 실패 시 None(다음 티어로)."""
+    r, _ = fetch_via_grid(url, item_selector=ITEM_SELECTOR)
+    return Selector(r.text) if r else None
+
+# 각 티어는 url을 받아 page(.css 가능) 또는 None을 반환하는 callable
 FETCHER_CHAIN = [
-    ("Fetcher", lambda: Fetcher()),
-    ("StealthyFetcher", lambda: StealthyFetcher()),
-    ("DynamicFetcher", lambda: DynamicFetcher()),
+    ("Fetcher",         lambda url: Fetcher().get(url)),                       # 평문 HTTP (가장 가벼움)
+    ("curl_cffi grid",  _grid_tier),                                          # ← 브라우저 앞 티어
+    ("StealthyFetcher", lambda url: StealthyFetcher().fetch(url, headless=True)),
+    ("DynamicFetcher",  lambda url: DynamicFetcher().fetch(url, network_idle=True)),
 ]
 
 results = []
@@ -45,11 +55,15 @@ current_fetcher_idx = 0
 for page_num in range(1, max_pages + 1):
     try:
         limiter.wait()
-        fetcher = FETCHER_CHAIN[current_fetcher_idx][1]()
-        page = fetcher.get(url) if current_fetcher_idx == 0 else fetcher.fetch(url)
+        page = FETCHER_CHAIN[current_fetcher_idx][1](url)
 
-        if page.status != 200:
-            raise Exception(f"Status {page.status}")
+        # 그리드 티어: 내부에서 이미 detect_softblock 검증 후 None(미돌파)/Selector 반환
+        #   → Selector엔 .status가 없어 getattr 기본 200, 실제 차단판정은 아래 css 매칭이 담당.
+        # 브라우저 티어(Fetcher/Stealthy/Dynamic): .status 인스턴스 속성 보유 → 여기서 체크.
+        if page is None or (getattr(page, "status", 200) != 200):
+            raise Exception("blocked or non-200")
+        if not page.css(ITEM_SELECTOR):          # 소프트블록(가짜 200) 방어
+            raise Exception("soft-block: 핵심 셀렉터 미매칭")
 
         # ... 데이터 파싱 ...
         consecutive_errors = 0
@@ -76,6 +90,23 @@ for page_num in range(1, max_pages + 1):
 **핵심 규칙:**
 - except 블록에서 반드시 `continue` — 절대 `break`로 중단하지 않는다
 - 연속 5회 실패 시에만 최종 중단
+- **그리드는 브라우저 앞 티어** — 평문 실패 시 브라우저를 띄우기 전에 curl_cffi 격자를 먼저 돌린다
+- **Akamai는 이 체인 자체를 쓰지 않는다** — 바로 Chrome CDP (antibot-strategies.md § WAF capability 라우팅)
+
+### 소프트블록 사전 검증 (첫 페이지 — 대량 루프 진입 전 필수)
+
+`status == 200`이라도 본문이 WAF 챌린지면 그대로 파싱하면 안 된다. 첫 페이지에서 한 번 건다.
+
+```python
+from utils import detect_softblock
+
+first = fetcher.get(start_url)  # 또는 .fetch(...)
+v = detect_softblock(first.html_content, status=first.status,
+                     selector_hit=bool(first.css("<ITEM_SELECTOR>")))
+if v["blocked"]:
+    logger.error(f"소프트블록 — {v['verdict']}: {v['signals']}")
+    raise SystemExit("수집 중단: 상위 Fetcher로 에스컬레이션 필요 (antibot-strategies.md)")
+```
 
 ### 부분 데이터 저장
 
@@ -232,6 +263,72 @@ def custom_action(page):
 
 page = fetcher.fetch(url, network_idle=True, page_action=custom_action)
 ```
+
+---
+
+## F: curl_cffi 경량 그리드
+
+브라우저를 띄우기 전, TLS 지문 위조 HTTP 요청을 **격자로 완전탐색**해 저비용으로 뚫는다. (insane-search Phase 1 차용) DataDome/PerimeterX/단순 403에 효과적. **Akamai는 제외** — `antibot-strategies.md § WAF capability 라우팅` 참조.
+
+`curl_cffi`는 `scrapling[fetchers]`에 포함돼 별도 설치 불필요. 매 응답을 `detect_softblock()`로 검증한다 — 200이어도 통과로 치지 않는다.
+
+```python
+import sys
+sys.path.insert(0, './scripts')
+from curl_cffi import requests as cffi
+from utils import detect_softblock, setup_logger
+from urllib.parse import urlparse
+
+logger = setup_logger("cffi_grid")
+
+IMPERSONATE   = ["safari17_0", "chrome131", "chrome120", "firefox133", "safari_ios"]
+def _url_transforms(url):
+    p = urlparse(url)
+    host = p.netloc
+    yield url                                            # 원본
+    if host.startswith("www."):
+        bare = host[4:]
+        yield url.replace(host, "m." + bare, 1)          # 모바일 서브도메인
+        yield url.replace(host, bare, 1)                 # www 제거
+    elif host.count(".") == 1:                           # www 없는 표준 도메인(example.com)
+        yield url.replace(host, "m." + host, 1)          # 모바일 변형만 추가
+def _referers(url):
+    p = urlparse(url)
+    return [f"{p.scheme}://{p.netloc}/", "https://www.google.com/", None]
+
+def fetch_via_grid(url, item_selector=None, timeout=25):
+    """그리드 완전탐색. 첫 strong/weak_ok 응답을 반환. 전부 실패 시 (None, trace)."""
+    trace = []
+    for imp in IMPERSONATE:
+        for u in _url_transforms(url):
+            for ref in _referers(url):
+                headers = {"Referer": ref} if ref else {}
+                try:
+                    r = cffi.get(u, impersonate=imp, headers=headers,
+                                 timeout=timeout, allow_redirects=True)
+                except Exception as e:
+                    trace.append({"imp": imp, "url": u, "ref": ref, "err": str(e)})
+                    continue
+                hit = None
+                if item_selector:
+                    from scrapling import Selector
+                    hit = bool(Selector(r.text).css(item_selector))
+                # ⚠ dict(r.cookies)는 무관 도메인에 동명 쿠키 있으면 CookieConflict로 터짐
+                #   (리다이렉트/외부 referer 시) → get_dict()로 안전 평탄화
+                v = detect_softblock(r.text, status=r.status_code,
+                                     cookies=r.cookies.get_dict(), selector_hit=hit)
+                trace.append({"imp": imp, "url": u, "ref": ref,
+                              "status": r.status_code, "verdict": v["verdict"]})
+                if not v["blocked"]:
+                    logger.info(f"그리드 돌파: {imp} / {u} / ref={ref} → {v['verdict']}")
+                    return r, trace
+    logger.warning(f"그리드 소진, 미돌파 ({len(trace)}회 시도) → 브라우저 단계로 에스컬레이션")
+    return None, trace
+```
+
+돌파 성공 시 `r.text`를 Scrapling Selector로 파싱해 평소처럼 수집. 실패하면 StealthyFetcher → DynamicFetcher로 올린다.
+
+> 그리드도 안 뚫리고 브라우저까지 가기 전 본문만 빠르게 보려면 **Jina Reader 폴백**(`antibot-strategies.md § Jina Reader 폴백`)을 쓴다. 정찰·단발 본문 확인용이며 대량 수집엔 부적합.
 
 ---
 

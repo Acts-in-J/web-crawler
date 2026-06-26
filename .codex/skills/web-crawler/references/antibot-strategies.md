@@ -5,10 +5,97 @@ SKILL.md Step 3에서 안티봇이 감지되면 이 문서를 참조한다.
 
 ## 목차
 
-1. [Akamai/고급 WAF → Chrome CDP](#akamai고급-waf--chrome-cdp)
-2. [SPA 세션 보호 → Playwright 인터셉트](#spa-세션-보호--playwright-인터셉트)
-3. [Cloudflare → StealthyFetcher](#cloudflare--stealthyfetcher)
-4. [Fetcher 에스컬레이션 자동화](#fetcher-에스컬레이션-자동화)
+1. [소프트블록(가짜 200) 탐지 — 모든 수집의 사전 게이트](#소프트블록가짜-200-탐지)
+2. [WAF capability 라우팅 — 왜 Stealthy 말고 CDP인가](#waf-capability-라우팅)
+3. [curl_cffi 경량 그리드 — 브라우저 전 저비용 돌파](#curl_cffi-경량-그리드)
+4. [URL 변형 / referer 트릭](#url-변형--referer-트릭)
+5. [Akamai/고급 WAF → Chrome CDP](#akamai고급-waf--chrome-cdp)
+6. [SPA 세션 보호 → Playwright 인터셉트](#spa-세션-보호--playwright-인터셉트)
+7. [Cloudflare → StealthyFetcher](#cloudflare--stealthyfetcher)
+8. [Jina Reader 폴백](#jina-reader-폴백)
+9. [종료 사유 분류 — terminal vs retryable](#종료-사유-분류)
+10. [Fetcher 에스컬레이션 자동화](#fetcher-에스컬레이션-자동화)
+
+> 1~4·8·9번은 insane-search(접근/돌파 관점)에서 차용한 전략이다. 5~7번은 이 프로젝트의 검증된 수집 전략.
+
+---
+
+## 소프트블록(가짜 200) 탐지
+
+**HTTP 200 = 성공이 아니라 "검증 시작"이다.** (insane-search R2) WAF는 200 OK로 챌린지/빈 셸을 돌려주는 경우가 많아, 그대로 파싱하면 "0건"이 아니라 **"쓰레기 N건"이 통과**한다. 수집 직전(첫 페이지)과 Step 5 검증에서 `utils.detect_softblock()`로 거른다.
+
+### 4단계 AND 검증
+
+| # | 검사 | 차단 시그널 |
+|---|------|------------|
+| 1 | 챌린지 마커 부재 | `sec-if-cpt-container`, `Access Denied`, `errors.edgesuite.net`, `Pardon Our Interruption`(PX), `captcha-delivery.com`(DataDome), `Just a moment...`(CF) |
+| 2 | 응답 크기 정상 | < 3KB 또는 WAF 특유 고정 크기 |
+| 3 | 쿠키 센서 정상 | **`_abck=...~-1~`** = Akamai 미통과(아직 차단) 상태 — 존재 여부가 아니라 **값**을 본다 |
+| 4 | success selector 매칭 | 핵심 콘텐츠 셀렉터 hit → `strong_ok`, 미제공 → `weak_ok` |
+
+```python
+from utils import detect_softblock
+
+v = detect_softblock(page.html_content, status=page.status,
+                     cookies=dict(session.cookies) if hasattr(session, "cookies") else None,
+                     selector_hit=bool(page.css("<ITEM_SELECTOR>")))
+# v["blocked"]가 True면 수집 강행 금지 → 아래 capability 라우팅으로 에스컬레이션
+```
+
+> ⚠️ `_abck` 쿠키 **존재**만으로 Akamai를 판정하던 기존 로직보다, `~-1~` **값**이 더 날카롭다. 통과(`~0~`/`~N~`)면 수집 진행, 미통과(`~-1~`)면 차단으로 본다.
+
+---
+
+## WAF capability 라우팅
+
+WAF를 "탐지"만 하지 말고 **"이 WAF를 뚫으려면 무엇이 필요한가"**로 분기한다. (insane-search 차용)
+
+| WAF 유형 | 필요 역량 | 올바른 도구 | curl_cffi/Stealthy로 되나? |
+|----------|----------|------------|---------------------------|
+| Cloudflare 기본 | JS 실행 | StealthyFetcher / DynamicFetcher | ✅ (Stealthy `solve_cloudflare=True`) |
+| DataDome / PerimeterX / F5 / 단순 403 | TLS 지문 위조 | **curl_cffi 그리드** 먼저 → 안되면 브라우저 | ✅ 종종 그리드로 뚫림 |
+| **Akamai Bot Manager** | **실제 TLS 스택 + 행동** | **Chrome CDP (headed real Chrome)** | ❌ **안 됨** |
+
+### 왜 Akamai엔 curl_cffi/StealthyFetcher가 안 되나 (헛고생 방지)
+
+- Akamai Bot Manager는 TLS 지문 + HTTP/2 프레이밍 + 마우스/타이밍 행동 신호를 종합한다. curl_cffi의 TLS 위조만으로는 `_abck` 센서가 `~-1~`에서 안 풀린다.
+- **headless/일반 Playwright(MCP 포함)는 탐지 가능한 stub을 주입**하므로 Akamai에 걸린다. 그래서 **headed real Chrome + CDP**라야 한다.
+- 결론: profile.json `antibot_type=akamai` 또는 `_abck ~-1~` 감지 시 **curl_cffi·Stealthy를 건너뛰고 즉시 Chrome CDP**. 이게 시간 절약의 핵심.
+
+---
+
+## curl_cffi 경량 그리드
+
+브라우저를 띄우기 전, **TLS 지문 위조 HTTP 요청을 격자로 완전탐색**해 저비용으로 뚫는 단계. (insane-search Phase 1 차용) DataDome/PerimeterX/단순 403에 효과적. **Akamai는 제외**(위 capability 라우팅 참조).
+
+### 그리드 축 (개념 — 정확한 impersonate 값/규칙의 단일 출처는 `fetcher-patterns.md § F` 코드)
+
+```
+impersonate     × url_transform        × referer_strategy
+─────────────     ─────────────────       ────────────────
+safari17_0        원본 URL                self-root (도메인 루트)
+chrome131         www→m. (모바일)         google_search
+chrome120         am- prefix              none
+firefox133        www 제거
+safari_ios (모바일)
+```
+
+각 셀을 시도하고 **매 응답마다 `detect_softblock()`로 검증** — 200이어도 통과로 치지 않는다. 모든 셀 소진 후에도 `blocked`면 브라우저 단계(StealthyFetcher → DynamicFetcher)로 에스컬레이션.
+
+> 코드 템플릿은 `fetcher-patterns.md § F: curl_cffi 경량 그리드` 참조.
+
+---
+
+## URL 변형 / referer 트릭
+
+브라우저 없이 공짜로 시도하는 우회. 그리드의 일부지만 단독으로도 효과가 커서 따로 둔다.
+
+| 트릭 | 방법 | 왜 통하나 |
+|------|------|----------|
+| 모바일 서브도메인 | `www.x.com` → `m.x.com` / `am-x.com` | 모바일 엔드포인트는 WAF가 약하게 걸린 경우 흔함 |
+| www 제거 | `www.x.com` → `x.com` | 리다이렉트 체인/엣지 룰 차이 |
+| self-root referer | `Referer: https://x.com/` | 내부 네비게이션처럼 보임 |
+| 검색엔진 referer | `Referer: https://www.google.com/` | 크롤러/SEO 트래픽으로 허용되는 경로 ⚠️ ToS 경계 주의 — 명백한 우회 회피용으론 쓰지 않는다 |
 
 ---
 
@@ -231,34 +318,81 @@ page = fetcher.fetch("<URL>", headless=True, solve_cloudflare=True)
 
 ---
 
+## Jina Reader 폴백
+
+JS 렌더링이 필요하거나 가볍게 막힌 페이지를 **브라우저 없이** 외부 렌더된 마크다운으로 받는 저비용 폴백. (insane-search 차용) DynamicFetcher/Chrome CDP로 에스컬레이션하기 **직전** 단계, 또는 정찰 시 본문 빠른 확인용.
+
+```python
+from scrapling.fetchers import FetcherSession
+
+with FetcherSession(impersonate="chrome") as s:
+    resp = s.get(f"https://r.jina.ai/{target_url}")  # 렌더된 markdown 반환
+    markdown = resp.text
+```
+
+- **용도**: 정찰·단발 본문 확인, 가벼운 차단 우회. 페이지네이션/대량 구조화 수집엔 부적합(레코드 추출이 아니라 본문 마크다운).
+- **한계**: 강한 WAF(Akamai 등)는 Jina도 못 뚫는다 → Chrome CDP로.
+
+---
+
+## 종료 사유 분류
+
+"못 뚫었다"를 선언하기 전, 종료 사유가 **terminal인지 retryable인지** 구분한다. (insane-search R6 차용) 잘못 분류하면 retryable을 포기하거나 terminal을 무한 재시도한다.
+
+| 분류 | stop_reason | 대응 |
+|------|------------|------|
+| **terminal (즉시 종료)** | `auth_required`(로그인 필요), `404`, `paywall`, 명시적 ToS 차단 | 에스컬레이션 중단 → 사용자 보고. 더 시도해도 무의미 |
+| **retryable (계속)** | `429`(rate limit), 네트워크 타임아웃, 일시적 5xx | **종료 아님.** 대기시간 2배(`limiter.backoff()`) 후 재시도. 429는 절대 "차단됨"으로 최종 판정하지 않는다 |
+| **escalate (상위 도구)** | `challenge`/`blocked`(소프트블록) | 그리드 → Stealthy → Dynamic → CDP 순으로 올린다. 전부 소진 후에만 실패 선언 |
+
+> **실패 선언 게이트:** ① 에스컬레이션 체인 소진 ② 남은 시도 경로 없음 ③ stop_reason이 terminal. 셋 다 충족 전엔 "이 사이트는 못 뚫는다"고 보고하지 않는다.
+
+---
+
 ## Fetcher 에스컬레이션 자동화
 
 범용 에스컬레이션 함수. 어떤 Fetcher를 사용해야 할지 불확실할 때 사용.
 
+**순서: 평문 HTTP → curl_cffi 그리드(브라우저 X) → 브라우저 티어.** 그리드를 브라우저 앞에 둔다.
+
 ```python
 from scrapling.fetchers import Fetcher, StealthyFetcher, DynamicFetcher
-from utils import setup_logger
+from scrapling import Selector
+from utils import setup_logger, detect_softblock
+# fetch_via_grid 는 fetcher-patterns.md § F 참조
 
 logger = setup_logger("escalation")
 
+def _grid_tier(url):
+    r, _ = fetch_via_grid(url)
+    return Selector(r.text) if r else None
+
 FETCHER_CHAIN = [
-    ("Fetcher", lambda url: Fetcher().get(url)),
+    ("Fetcher",         lambda url: Fetcher().get(url)),                       # 평문 HTTP
+    ("curl_cffi grid",  _grid_tier),                                          # ← 브라우저 앞 티어
     ("StealthyFetcher", lambda url: StealthyFetcher().fetch(url, headless=True)),
-    ("DynamicFetcher", lambda url: DynamicFetcher().fetch(url, network_idle=True)),
+    ("DynamicFetcher",  lambda url: DynamicFetcher().fetch(url, network_idle=True)),
 ]
 
 def fetch_with_escalation(url: str):
     for name, fetch_fn in FETCHER_CHAIN:
         try:
             page = fetch_fn(url)
-            if page.status == 200 and page.css("body"):
-                logger.info(f"[{name}] Success")
-                return page, name
-            elif page.status == 403:
-                logger.warning(f"[{name}] 403 Forbidden, escalating")
+            if page is None:                       # 그리드 미돌파 → 다음 티어
+                logger.warning(f"[{name}] blocked, escalating")
                 continue
+            status = getattr(page, "status", 200)
+            # 소프트블록 검증 — 200이어도 통과로 치지 않는다
+            v = detect_softblock(getattr(page, "html_content", ""), status=status,
+                                 selector_hit=bool(page.css("body")))
+            if not v["blocked"]:
+                logger.info(f"[{name}] Success ({v['verdict']})")
+                return page, name
+            logger.warning(f"[{name}] {v['verdict']}: {v['signals']}, escalating")
         except Exception as e:
             logger.warning(f"[{name}] Error: {e}, escalating")
             continue
     return None, None
 ```
+
+> Akamai는 이 체인을 건너뛰고 바로 Chrome CDP. curl_cffi/Stealthy로 Akamai를 두드리지 않는다.

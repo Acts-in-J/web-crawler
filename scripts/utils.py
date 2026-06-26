@@ -96,6 +96,66 @@ def detect_pii(data: list[dict]) -> list[str]:
     return warnings
 
 
+# ── 소프트블록(가짜 200) 탐지 — insane-search R2 4단계 검증 차용 ──
+# WAF는 HTTP 200으로 챌린지/빈 셸을 돌려주는 경우가 많다. status 200 = 성공이 아니라
+# "검증 시작"이다. 아래 마커/크기/쿠키 센서를 AND로 보고 수집 직전에 걸러낸다.
+_SOFTBLOCK_MARKERS = (
+    "sec-if-cpt-container",      # Akamai 챌린지 컨테이너
+    "access denied",            # Akamai/edgesuite 거부
+    "errors.edgesuite.net",
+    "reference #",              # Akamai/edgesuite 에러 페이지
+    "pardon our interruption",  # PerimeterX
+    "captcha-delivery.com",     # DataDome
+    "just a moment...",         # Cloudflare 챌린지
+    "cf-browser-verification",
+    "attention required",       # Cloudflare 1020
+    "verifying you are human",
+    "enable javascript and cookies to continue",
+)
+
+
+def detect_softblock(text, status: int = 200, cookies: dict | None = None,
+                     selector_hit: bool | None = None, min_size: int = 3000) -> dict:
+    """가짜 200(소프트블록) 판별. HTTP 200이라도 본문이 WAF 챌린지면 잡아낸다.
+
+    insane-search의 4단계 AND 검증 차용:
+      1) 챌린지 마커 부재  2) 응답 크기 정상  3) 쿠키 센서 정상(_abck=...~-1~ 거부)
+      4) success selector 매칭(제공 시 strong, 미제공 시 weak)
+
+    반환: {"blocked": bool, "verdict": str, "signals": [..]}
+      verdict ∈ strong_ok | weak_ok | challenge | blocked
+    selector_hit 단독 미스만으로는 차단 판정하지 않는다(셀렉터 오타/자가치유와 충돌 방지).
+    실제 차단 판정은 마커/크기/쿠키 센서 시그널이 있을 때만.
+    """
+    text = text or ""
+    low = text.lower()
+
+    # HTTP 레벨 차단 (즉시 종료)
+    if status in (401, 402, 403):
+        return {"blocked": True, "verdict": "blocked", "signals": [f"HTTP {status}"]}
+
+    signals = []
+    # 1) 챌린지 마커
+    for marker in _SOFTBLOCK_MARKERS:
+        if marker in low:
+            signals.append(f"challenge marker: {marker}")
+    # 2) 응답 크기 (지나치게 작으면 챌린지/빈 셸 의심)
+    if len(text) < min_size:
+        signals.append(f"response too small: {len(text)}B < {min_size}B")
+    # 3) 쿠키 센서 — Akamai _abck 가 '...~-1~' 면 아직 미통과(차단) 상태
+    if cookies:
+        abck = cookies.get("_abck", "")
+        if "~-1~" in abck:
+            signals.append("akamai _abck sensor unsolved (~-1~)")
+
+    if signals:
+        return {"blocked": True, "verdict": "challenge", "signals": signals}
+
+    # 4) 마커/크기/쿠키 정상 → selector 매칭 여부로 strong/weak 구분
+    verdict = "strong_ok" if selector_hit else "weak_ok"
+    return {"blocked": False, "verdict": verdict, "signals": []}
+
+
 def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
     """콘솔 출력용 로거 생성."""
     logger = logging.getLogger(name)

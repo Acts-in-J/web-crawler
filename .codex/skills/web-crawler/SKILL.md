@@ -18,15 +18,15 @@ description: URL과 수집 항목을 받아 사이트를 정찰하고 데이터�
 ## 워크플로우 개요
 
 ```
-Step 1: 입력 파싱 → Step 1-A: 도메인 프로필 확인
-    ↓
+Step 1: 입력 파싱 → Step 1-A: 도메인 프로필 확인 → Step 1-B: Phase 0 공인 우회로 체크
+    ↓                  (재사용 Yes → Step 3)        (해결되면 정찰 스킵 → Step 4)
 Step 2: 정찰 (agent-browser) → Step 2-A: 인증 처리 (필요 시)
     ↓
 Step 3: 사이트 분류 & 수집 전략 결정 ← 핵심 의사결정
     ↓
 Step 4: 수집 코드 생성 & 실행
     ↓
-Step 5: 데이터 검증
+Step 5: 데이터 검증 (Step 5.0 소프트블록 게이트 최우선)
     ↓
 Step 5-A: 도메인 프로필 저장 (필수 게이트, 누락 시 파이프라인 미완료)
     ↓
@@ -53,7 +53,9 @@ from domain_profile import DomainProfile
 profile_mgr = DomainProfile()
 if profile_mgr.exists(domain):
     profile = profile_mgr.load(domain)
-    # "이전 설정을 재사용할까요?" → Yes면 Step 3으로
+    # "이전 설정을 재사용할까요?"
+    #   → Yes(재사용): Phase 0(1-B) 건너뛰고 바로 Step 3 (검증된 레시피 보유)
+    #   → No(신규·미재사용)·프로필 없음: Step 1-B(Phase 0)부터 진행
 ```
 
 수집 성공 후 프로필 저장:
@@ -68,6 +70,22 @@ profile_mgr.save(domain, {
     "notes": "<특이사항>",
 })
 ```
+
+### Step 1-B: Phase 0 공인 우회로 체크
+
+> profile.json이 없거나(신규 도메인) 재사용 안 할 경우, **정찰(Step 2)로 가기 전에** 그 플랫폼에 공개 API/피드/oEmbed가 있는지 먼저 본다. (insane-search Phase 0 차용) 있으면 HTML 정찰·긁기보다 빠르고 안정적이며 차단도 거의 없다 → 정찰 스킵하고 바로 수집.
+
+| 플랫폼 유형 | 공인 우회로 | 비고 |
+|------------|-----------|------|
+| YouTube/TikTok/SoundCloud 등 미디어 | `yt-dlp --dump-json <URL>` | 메타/자막, 1,800+ 사이트 |
+| arXiv / Wikipedia / GitHub / CrossRef | Atom/REST 공개 API | 인증 불필요 |
+| X(트위터) 단일 트윗 | `cdn.syndication.twimg.com` oEmbed | |
+| Reddit | 서브레딧/스레드 `.rss` (Atom) | |
+| Hacker News | Firebase JSON API | |
+| 네이버 검색·금융 | 비공식 JSON 엔드포인트 | 도메인 프로필 참조 |
+| 일반 사이트 (가볍게 막힘/SPA 렌더) | `https://r.jina.ai/<URL>` | 정찰·단발 본문용, 대량 수집엔 부적합 |
+
+**판정:** Phase 0로 데이터가 충분히 나오면 → 정찰 스킵, Step 3 분류 트리도 건너뛰고 수집(Step 4)으로. 안 되면 → Step 2 정찰로 정상 진행.
 
 ---
 
@@ -120,6 +138,8 @@ agent-browser에서 네트워크 요청을 캡처하여 API를 식별한다.
 
 정찰 결과에 따라 사이트를 분류하고, 적합한 수집 전략을 선택한다. 이것이 전체 워크플로우에서 가장 중요한 결정이다.
 
+> **Phase 0 선행 확인됨 가정.** 여기 오기 전 [Step 1-B](#step-1-b-phase-0-공인-우회로-체크)에서 공인 API/피드(yt-dlp·RSS·oEmbed·Jina)를 이미 확인했다. Phase 0로 해결됐으면 이 트리를 건너뛴다.
+
 ### 사이트 분류 의사결정 트리
 
 ```
@@ -129,12 +149,18 @@ agent-browser에서 네트워크 요청을 캡처하여 API를 식별한다.
 │   └── No (403/세션 필요) → (E) SPA 세션 인터셉트 (Playwright)
 │
 └── No → 안티봇 보호?
-    ├── Akamai 감지 → (D) Chrome CDP 전략
+    ├── Akamai 감지 → (D) Chrome CDP 전략  ※ curl_cffi/Stealthy 건너뜀
     ├── Cloudflare 감지 → (C) StealthyFetcher
+    ├── 기타 WAF(DataDome/PerimeterX/F5 등) 또는 단순 403
+    │     → (F) curl_cffi 경량 그리드 먼저  ← 브라우저 띄우기 전 저비용 돌파
+    │         (impersonate × URL변형 × referer 조합, antibot-strategies.md 참조)
+    │         실패 시 → StealthyFetcher → DynamicFetcher 순 에스컬레이션
     └── 없음 → JS 렌더링 필요?
         ├── Yes → (B-2) DynamicFetcher
         └── No → (B-1) Fetcher (기본 HTTP)
 ```
+
+> **에스컬레이션 순서 원칙:** 가벼운 것부터. `(F) curl_cffi 그리드`(브라우저 X) → `StealthyFetcher` → `DynamicFetcher` → `Chrome CDP`. 단 **Akamai는 예외** — curl_cffi/Stealthy를 건너뛰고 바로 Chrome CDP (이유는 antibot-strategies.md "WAF capability 라우팅").
 
 ### 각 전략의 코드 패턴
 
@@ -148,6 +174,7 @@ agent-browser에서 네트워크 요청을 캡처하여 API를 식별한다.
 | **(C) Cloudflare** | StealthyFetcher | CF 보호 사이트 | antibot-strategies.md § Cloudflare |
 | **(D) Akamai/WAF** | Chrome CDP | coupang.com | antibot-strategies.md § Akamai |
 | **(E) SPA 세션** | Playwright 인터셉트 | g2b.go.kr (WebSquare) | antibot-strategies.md § SPA 세션 |
+| **(F) 경량 그리드** | curl_cffi 그리드 | DataDome/PerimeterX/단순 403 (Akamai 제외) | antibot-strategies.md § curl_cffi 그리드 |
 
 ### 안티봇 감지 시그널
 
@@ -205,6 +232,36 @@ items = page.css("<SELECTOR>", adaptive=True, auto_save=True,
 ---
 
 ## Step 5: 데이터 검증
+
+### Step 5.0: 소프트블록 게이트 (최우선 — 다른 검증보다 먼저)
+
+> **HTTP 200 = 성공이 아니라 "검증 시작"이다.** Akamai/DataDome/PerimeterX는 200 OK로 가짜 챌린지 페이지나 빈 셸을 돌려준다. 0건이 아니라 **"쓰레기 N건"으로 통과**해 엑셀로 납품되는 사고를 막는 게 이 게이트의 목적이다. (insane-search R2 차용)
+
+**언제 실행하나:** 첫 페이지 응답 직후(대량 루프 진입 전)와, Step 5 검증 시작 시 1회. 즉 **수집 전·후 양쪽**에서 건다.
+
+```python
+from utils import detect_softblock
+
+# 첫 페이지 본문 + status + 쿠키로 판별 (cookies는 session.cookies 등에서 dict로)
+verdict = detect_softblock(
+    page.html_content,                 # 또는 resp.text
+    status=page.status,
+    cookies=dict(session.cookies) if hasattr(session, "cookies") else None,
+    selector_hit=bool(page.css("<ITEM_SELECTOR>")),  # 핵심 콘텐츠 셀렉터 매칭 여부
+)
+if verdict["blocked"]:
+    logger.error(f"소프트블록 감지 — {verdict['verdict']}: {verdict['signals']}")
+    # → 수집 강행 금지. Step 3 안티봇 분기로 에스컬레이션:
+    #   challenge/blocked + Akamai 시그널 → Chrome CDP
+    #   그 외 → curl_cffi 그리드 / StealthyFetcher / DynamicFetcher 상위 단계
+```
+
+**게이트 규칙:**
+1. `blocked=True`면 **수집을 강행하지 않는다.** 상위 Fetcher로 에스컬레이션하거나(antibot-strategies.md), 그래도 안 뚫리면 사용자에게 보고 후 중단.
+2. `verdict`가 `challenge`/`blocked`이고 Akamai 시그널(`_abck ~-1~` 등)이 같이 잡히면 **즉시 Chrome CDP**로 점프 (StealthyFetcher 헛고생 금지).
+3. `weak_ok`(셀렉터 미검증 통과)는 통과시키되, 수집 후 필드 채움률이 비정상적으로 낮으면 이 게이트를 의심한다.
+
+### 일반 검증
 
 1. 수집 건수 확인 (목표 대비 %)
 2. 각 필드별 null/빈값 비율 체크
