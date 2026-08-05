@@ -43,6 +43,6 @@
       }
     }
   ],
-  "notes": "Next.js CSR site with public JSON API. No auth needed. Use /api/v4/jobs with offset pagination for latest listing IDs, then /api/v4/jobs/{id} for detail.intro/main_tasks/requirements/preferred_points/benefits.",
-  "last_used": "2026-06-09"
+  "notes": "Next.js CSR site with public JSON API. No auth needed. Use /api/v4/jobs with offset pagination for latest listing IDs, then /api/v4/jobs/{id} for detail.intro/main_tasks/requirements/preferred_points/benefits. NOTE: Scrapling resp.text can be empty on this API -> use resp.json() / resp.body. IMAGES: /api/v4/jobs/{id} -> job.company_images[].url (brand photos, 1080x790), job.title_img.origin, job.logo_img.origin; download bytes via FetcherSession resp.body.",
+  "last_used": "2026-06-29"
 }

@@ -29,15 +29,16 @@
         "x-requested-with": "XMLHttpRequest"
       },
       "field_mapping": {
-        "작성자": ".sdp-review__article__list__info__user__name",
-        "평점": ".sdp-review__article__list__info__product-info__star-orange (data-rating)",
-        "리뷰내용": ".sdp-review__article__list__review__content",
-        "작성일": ".sdp-review__article__list__info__product-info__reg-date",
-        "구매옵션": ".sdp-review__article__list__info__product-info__name",
-        "도움수": ".js_reviewArticleHelpfulCount"
+        "article_root": "article.sdp-review__article__list",
+        "작성자": "span.sdp-review__article__list__info__user__name",
+        "리뷰내용": "div.sdp-review__article__list__review__content (fallback: div.sdp-review__article__list__review > div)",
+        "작성일": "div.sdp-review__article__list__info__product-info__reg-date",
+        "구매옵션": "div.sdp-review__article__list__info__product-info__option",
+        "도움수": "span.sdp-review__article__list__info__product-info__like-count"
       }
     }
   ],
-  "notes": "Akamai WAF로 보호되므로 FETCHER_CHAIN(Fetcher/Stealthy/Dynamic) 금지 → 반드시 launch_chrome_cdp()로 headed Chrome 띄우고 page.evaluate() 안에서 fetch + DOMParser로 HTML 응답 파싱. 리뷰 API는 JSON 아니라 HTML 조각 반환. 봇 탐지 트리거 방지를 위해 페이지간 200~500ms 간격, 한 번에 5페이지 단위 배치 처리. 상품 페이지는 PRODUCT_ID/ITEM_ID/VENDOR_ITEM_ID 3개 모두 필수.",
-  "last_used": "2026-03-31"
+  "selector_product_title": "h1.prod-buy-header__title (fallback: meta[property=og:title])",
+  "notes": "Akamai WAF로 보호되므로 FETCHER_CHAIN(Fetcher/Stealthy/Dynamic) 금지 → 반드시 launch_chrome_cdp()로 headed Chrome 띄우고 page.evaluate() 안에서 fetch + DOMParser로 HTML 응답 파싱. 상품 페이지를 먼저 연 같은 세션에서 리뷰 API를 호출해야 한다. 리뷰 API는 JSON 아니라 HTML 조각 반환. 봇 탐지 트리거 방지 위해 페이지간 200~500ms 간격, 5페이지 단위 배치. 상품 페이지는 PRODUCT_ID/ITEM_ID/VENDOR_ITEM_ID 3개 모두 필수. 리뷰 끝 판정: 연속 N배치 빈 결과면 종료(per_page=10, 마지막 페이지 넘어가면 빈 HTML). ★ 쿠팡 리뷰는 별점/사진만 남기는 텍스트-없는 리뷰가 약 50% — '리뷰 텍스트 전문' 요청 시 리뷰내용 빈 행은 정상(셀렉터 누락 아님). 텍스트 있는 리뷰는 전문 그대로 들어옴(잘림 없음, 최대 2300자+ 확인). 상품 페이지 Chrome 실행 전 기존 Chrome 모두 종료 필요. 2026-07-14 상품 8919133357의 33건 수집 성공 경로: chrome_cdp + /vp/product/reviews.",
+  "last_used": "2026-07-14"
 }
