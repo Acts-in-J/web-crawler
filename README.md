@@ -158,29 +158,35 @@ python -m venv .venv
 
 ## 작동 방식 (요약)
 
-에이전트는 다음 7단계로 움직입니다. 자세한 규칙은 `.claude/skills/web-crawler/SKILL.md`에 있습니다.
+에이전트는 다음 흐름으로 움직입니다. 자세한 규칙은 `.claude/skills/web-crawler/SKILL.md`에 있습니다.
 
 ```
 1.  입력 파싱 (URL + 수집 항목 추출)
 1-A. 도메인 프로필 조회 ── 있음 + 재사용 OK ──→ 3 으로 점프 (정찰 스킵)
+1-B. 공인 우회로 확인 (공개 API·RSS·oEmbed 등) ── 있음 ──→ 4 로 점프 (정찰 스킵)
 2.  정찰 (사이트 구조·API·페이지네이션 파악)
+2-A. 인증 처리 (로그인 필요 시 — 사용자가 직접 로그인, 쿠키만 추출)
 3.  수집 전략 + Fetcher 선택
 4.  수집 스크립트(crawl_script.py) 생성 & 실행
-5.  데이터 검증 (건수·빈값·PII 확인)
+5.  데이터 검증 (소프트블록 → 건수·빈값·PII 순)
 5-A. 도메인 프로필 저장 (필수 — 다음 수집 가속)
 6.  엑셀 생성 & 결과 보고
 ```
+
+> **소프트블록**이란 차단인데 겉으로는 성공(HTTP 200)처럼 보이는 응답입니다. 빈 껍데기 페이지를 정상 데이터로 착각하고 계속 긁으면 차단이 굳어지므로, 다른 검증보다 **먼저** 확인합니다.
 
 ### 수집 방법(Fetcher)은 사이트에 따라 자동 선택
 
 ```
 API 발견?        → FetcherSession (가장 빠름)
-안티봇 보호?      → StealthyFetcher (Cloudflare) / Chrome CDP (Akamai)
+안티봇 보호?      → Cloudflare        : StealthyFetcher
+                  그 외 WAF·단순 403 : curl_cffi 경량 그리드 → 실패 시 브라우저
+                  Akamai/고급 WAF    : Chrome CDP (앞 단계 건너뜀)
 JS 렌더링 필요?   → DynamicFetcher (브라우저 렌더링)
 그 외            → Fetcher (기본 HTTP)
 ```
 
-수집이 실패하면 자동으로 상위 방법으로 단계적 전환(에스컬레이션)합니다.
+수집이 실패하면 **가벼운 것부터** 자동으로 단계적 전환(에스컬레이션)합니다 — `Fetcher → curl_cffi 그리드 → StealthyFetcher → DynamicFetcher → Chrome CDP`. 브라우저를 띄우기 전에 저비용 방법을 먼저 시도하는 구조입니다. 단 Akamai는 앞 단계가 통하지 않으므로 곧장 Chrome CDP로 갑니다.
 
 ---
 
@@ -234,18 +240,19 @@ JS 렌더링 필요?   → DynamicFetcher (브라우저 렌더링)
 
 ```
 output/                              # gitignore — 수집 결과물
-└── <도메인>/
-    └── <주제_YYYYMMDD_HHMMSS>/
-        ├── crawl_result.xlsx        # 최종 엑셀
-        ├── raw_data.json            # 원시 데이터
-        └── crawl_script.py          # 생성된 수집 스크립트
+└── <도메인>/                        # 예: coupang.com
+    ├── <주제_YYYYMMDD_HHMMSS>/      # 실행 건별 폴더
+    │   ├── crawl_result.xlsx        # 최종 엑셀
+    │   ├── raw_data.json            # 원시 데이터
+    │   ├── progress.json            # 진행 상황 (중단 시 이어서 수집)
+    │   └── crawl_script.py          # 생성된 수집 스크립트
+    └── cookies.json                 # ignored — 로그인 쿠키 (같은 사이트의 모든 작업이 공유)
 
 fingerprints/                        # gitignore + whitelist
-├── elements_storage.db              # ignored — Scrapling 셀렉터 자가치유 DB
-└── <sanitized_domain>/
+├── elements_storage.db              # ignored — Scrapling 셀렉터 자가치유 DB (전역 공유)
+└── <sanitized_domain>/              # 예: coupang_com, www_kurly_com
     ├── profile.json                 # ✓ tracked — 도메인 수집 레시피
-    ├── recipe.md                    # ✓ tracked (선택) — 추가 노트
-    └── cookies.json                 # ignored — 로그인 쿠키
+    └── recipe.md                    # ✓ tracked (선택) — 추가 노트
 ```
 
 ## 안전 규칙 (에이전트가 항상 지킴)
