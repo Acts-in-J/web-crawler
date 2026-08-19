@@ -185,6 +185,17 @@ def do_agent_browser(core_only, force):
     return True, None
 
 
+def do_workdirs():
+    """수집 결과가 쌓일 로컬 작업 디렉터리를 미리 만든다.
+
+    export_excel/progress 가 기록 시점에 makedirs 하므로 기능상 필수는 아니다.
+    갓 clone한 트리에서 "결과가 어디로 가는지" 눈에 보이게 하려는 목적.
+    output/ 은 통째로 gitignore라 이 폴더는 커밋되지 않는다.
+    """
+    (REPO / "output").mkdir(exist_ok=True)
+    log(f"  [OK] 작업 디렉터리: {REPO / 'output'}")
+
+
 def do_preflight(core_only):
     stage("4/4 Preflight 검증")
     cmd = [PY, str(REPO / "scripts" / "preflight.py")]
@@ -205,6 +216,8 @@ def main():
     if sys.prefix == sys.base_prefix:
         log("  [WARN] venv 밖에서 실행 중. Windows는 'scripts\\setup.ps1' 권장(venv 자동 생성).")
     log(f"  python: {PY}")
+
+    do_workdirs()
 
     results, times, nexts = {}, {}, []
     for key, fn in [

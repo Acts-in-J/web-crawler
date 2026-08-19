@@ -72,9 +72,14 @@ python scripts/preflight.py              # 검증: core / agent-browser 분리 P
 - profile.json의 `notes` 필드를 읽지 않고 전략 세우기 — notes에는 LLM이 자동으로 못 알아내는 결정적 메타 정보가 박혀 있다 ("Akamai라 chrome_cdp 필수", "review API는 JSON 아니라 HTML 반환" 등)
 - 수집 성공 후 profile.json 저장/갱신을 빠뜨리기 — Step 5-A 필수 게이트. 누락 시 "파이프라인 미완료" 보고
 
-### 알려진 도메인 (2026-05-13 기준 11개 profile commit됨)
+<!-- BEGIN GENERATED: domain-list -->
+<!-- 이 블록은 scripts/sync_domain_list.py 가 생성한다. 직접 수정하지 말 것. -->
 
-`books.toscrape.com`, `brand.naver.com`, `builtini.co.kr`, `coupang.com`, `data.seoul.go.kr`, `fin.land.naver.com`, `g2b.go.kr`, `made-in-china.com`, `smartstore.naver.com`, `wanted.co.kr`, `www.kurly.com` — 이 도메인들은 정찰 없이 바로 수집 시도 가능.
+### 알려진 도메인 (19개 profile commit됨)
+
+`books.toscrape.com`, `brand.naver.com`, `builtini.co.kr`, `celimax.co.kr`, `coupang.com`, `data.seoul.go.kr`, `db.itkc.or.kr`, `fin.land.naver.com`, `g2b.go.kr`, `guesskorea.com`, `made-in-china.com`, `oliveyoung.co.kr`, `smartstore.naver.com`, `wanted.co.kr`, `www.11st.co.kr`, `www.fss.or.kr`, `www.gsmarena.com`, `www.instagram.com`, `www.kurly.com` — 이 도메인들은 정찰 없이 바로 수집 시도 가능.
+
+<!-- END GENERATED: domain-list -->
 
 ### profile 조회/저장 코드
 
@@ -100,6 +105,13 @@ profile_mgr.save(domain, {
     "notes": "<다음 사람이 정찰 없이 바로 수집할 수 있는 결정적 한두 줄>",
     "last_used": "YYYY-MM-DD",
 })
+```
+
+새 도메인 프로필을 처음 만들었다면 저장 직후 목록을 재생성한다 (위 "알려진 도메인" 블록은 생성물):
+
+```bash
+python scripts/sync_domain_list.py          # CLAUDE.md / README.md 목록 재생성
+python scripts/sync_domain_list.py --check  # 어긋나면 exit 1
 ```
 
 > ⚠️ profile.json은 git commit 대상이다. 토큰/쿠키/API key는 절대 박지 말고 `cookies.json`/`auth.json` 같은 별도 파일(.gitignore 차단됨)에 분리.
@@ -251,6 +263,7 @@ Fetcher → curl_cffi 그리드 → StealthyFetcher → DynamicFetcher → agent
 - 수집 스크립트는 해당 작업의 출력 디렉터리 하에서 작업 (아래 출력 위치 참조)
 - 셀렉터 핑거프린트는 `storage_args={"storage_file": "./fingerprints/elements_storage.db"}` 경로 사용
 - **수집 성공 후 반드시 profile.json save/갱신** — 새로 알아낸 endpoint/selector/notes는 누적, `last_used`만 업데이트하지 말 것 (Step 5-A 게이트)
+- **새 도메인이면 `python scripts/sync_domain_list.py` 실행** — CLAUDE.md/README.md의 "알려진 도메인" 목록은 profile.json에서 생성된다. 손으로 고치지 말 것 (`scripts/test_sync_domain_list.py`가 어긋남을 잡는다)
 
 ## 사용자 상호작용 규칙
 

@@ -207,7 +207,12 @@ JS 렌더링 필요?   → DynamicFetcher (브라우저 렌더링)
 - **`notes` 비우지 않기.** "Akamai라 chrome_cdp 필수", "review API는 HTML 반환" 같은 결정적 메타 정보.
 - **자격증명 박지 않기.** profile.json은 commit 대상이므로 API key/토큰/쿠키는 별도 파일로 분리.
 
+<!-- BEGIN GENERATED: domain-list -->
+<!-- 이 블록은 scripts/sync_domain_list.py 가 생성한다. 직접 수정하지 말 것. -->
+
 현재 19개 도메인 프로필이 포함되어 있습니다: `books.toscrape.com`, `brand.naver.com`, `builtini.co.kr`, `celimax.co.kr`, `coupang.com`, `data.seoul.go.kr`, `db.itkc.or.kr`, `fin.land.naver.com`, `g2b.go.kr`, `guesskorea.com`, `made-in-china.com`, `oliveyoung.co.kr`, `smartstore.naver.com`, `wanted.co.kr`, `www.11st.co.kr`, `www.fss.or.kr`, `www.gsmarena.com`, `www.instagram.com`, `www.kurly.com`.
+
+<!-- END GENERATED: domain-list -->
 
 ---
 
