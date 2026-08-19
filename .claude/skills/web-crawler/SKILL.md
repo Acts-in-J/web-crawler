@@ -158,7 +158,15 @@ agent-browser를 못 쓸 때 Claude 계열 host에서 쓴다. **사용자의 실
    // 페이지 컨텍스트라 세션 쿠키·헤더가 그대로 탑승한다 (정찰용 1회 호출)
    await fetch('<후보 API URL>', {cache:'no-store'}).then(r => r.json())
    ```
-   `fetch`·`XMLHttpRequest` 둘 다 캡처 대상임은 확인됐다. 광고·분석 픽셀(criteo/adnxs/facebook 등)이 다수 섞이므로 `urlPattern`으로 1st-party 도메인을 걸러 읽는다.
+   `fetch`·`XMLHttpRequest` 둘 다 캡처 대상임은 확인됐다. 광고·분석 픽셀(criteo/adnxs/facebook)과 RUM(Datadog `browser-intake-datadoghq.com/api/v2/rum`)이 진짜 API보다 훨씬 많으므로, `urlPattern`을 `/api/`가 아니라 **1st-party 도메인**으로 걸어 읽는다.
+
+**값 마스킹에 주의한다 (실측).** Claude in Chrome은 자격증명처럼 보이는 값을 자동으로 가린다 — `[BLOCKED: JWT token]`, `[BLOCKED: Cookie/query string data]`, `[BLOCKED: Base64 encoded data]`. 원시 덩어리를 통째로 뽑으면 정작 필요한 부분이 가려진다:
+
+- ❌ `el.outerHTML` 통째 덤프, `JSON.parse(...)` 결과 전체 반환, 쿼리스트링 포함 URL 그대로 반환
+- ✅ **속성·키 이름 단위로 뽑는다** — `Object.keys(obj)`, `el.className`, `el.getAttribute('href')`, `locator.count()`
+- 응답 구조를 볼 때도 값이 아니라 키만: `Object.keys(j)`, `Object.keys(j.data[0])`
+
+즉 마스킹은 정찰을 막지 않는다. 정찰에 필요한 건 값이 아니라 **구조**이므로, 처음부터 키·개수·셀렉터만 뽑으면 걸리지 않는다.
 
 > **여기서도 수집은 금지다.** `javascript_tool`은 구조 파악과 API 후보 1회 검증에만 쓴다. 페이지 안에서 루프 돌려 전량 추출하는 것은 절대 규칙 2 위반 — 수집은 `crawl_script.py`로 한다.
 >
