@@ -222,7 +222,7 @@ JS 렌더링 필요?   → DynamicFetcher (브라우저 렌더링)
 
 | 경로 | 상태 | 내용 |
 |------|------|------|
-| `scripts/` · `.claude/` · `.codex/` · `.agents/` | ✓ tracked | 공통 모듈, 에이전트 지시서·스킬 |
+| `scripts/` · `.claude/` · `.codex/` | ✓ tracked | 공통 모듈, 에이전트 지시서·스킬 |
 | `fingerprints/<도메인>/profile.json` | ✓ tracked | 도메인 수집 레시피 (자격증명 제외) |
 | `output/` | 로컬 전용 | 수집 결과물 — 제3자 콘텐츠·PII 가능 |
 | `autoresearch-web-crawler/` | 로컬 전용 | 스킬 평가 실험 run 데이터 |
