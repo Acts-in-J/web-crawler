@@ -12,18 +12,14 @@ from domain_profile import DomainProfile
 from datetime import datetime
 
 
-def test_e2e_selector_self_healing():
+def test_e2e_selector_self_healing(tmp_path):
     """셀렉터 자가 치유: auto_save로 핑거프린트 저장 후 adaptive로 복구 확인."""
     from scrapling.parser import Adaptor
 
     logger = setup_logger("e2e_phase5_healing")
-    fingerprint_dir = os.path.join(os.path.dirname(__file__), "..", "fingerprints")
-    os.makedirs(fingerprint_dir, exist_ok=True)
-    db_path = os.path.join(fingerprint_dir, "test_elements_storage.db")
-
-    # 기존 DB 정리
-    if os.path.exists(db_path):
-        os.remove(db_path)
+    # 핑거프린트 DB는 tmp_path 아래에 만든다. 실제 fingerprints/ 에 쓰면
+    # SQLite 사이드카(-shm/-wal)가 남아 프로덕션 디렉터리를 오염시킨다.
+    db_path = str(tmp_path / "test_elements_storage.db")
 
     logger.info("=== Phase 5 E2E: Selector Self-Healing ===")
 
@@ -69,13 +65,7 @@ def test_e2e_selector_self_healing():
     assert os.path.exists(db_path), "Fingerprint DB not created"
     logger.info(f"Fingerprint DB exists: {db_path}")
 
-    # Cleanup — SQLite may hold the file on Windows, ignore if locked
-    try:
-        if os.path.exists(db_path):
-            os.remove(db_path)
-    except PermissionError:
-        logger.info("DB file locked (SQLite), skipping cleanup")
-
+    # cleanup 불필요 — tmp_path는 매 실행 새로 만들어지고 pytest가 회수한다
     logger.info("=== Selector Self-Healing Test PASSED ===")
 
 
