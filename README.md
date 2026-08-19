@@ -275,4 +275,3 @@ git diff --cached --name-only        # commit 직전 무엇이 올라가는지 �
 - `AGENTS.md` — Codex 실행 계약 (최초 셋업 포함)
 - `.claude/skills/web-crawler/SKILL.md` — 워크플로우 (Step 1-A/5-A 게이트 포함)
 - `.claude/skills/web-crawler/references/` — fetcher-patterns / antibot-strategies / troubleshooting
-- `blueprint-web-crawler.md` — 시스템 설계서
