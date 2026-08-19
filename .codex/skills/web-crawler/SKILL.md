@@ -93,9 +93,20 @@ profile_mgr.save(domain, {
 
 > **agent-browser는 이 프로젝트의 표준 정찰 도구다 (선택 아님).** 단순 정적 사이트를 긁더라도 정찰 단계에서는 agent-browser를 먼저 사용한다.
 >
-> **시작 전 (양 host 공통)**: `agent-browser skills get core --full`을 실행해 agent-browser 사용법(snapshot-and-ref 워크플로우, 네트워크 캡처 등)을 로드한다. 사용법은 CLI에 내장돼 항상 버전 일치하며, Claude Code·Codex 모두 이 한 줄로 동일하게 준비된다.
+> **시작 전 (양 host 공통)**: 우선 `agent-browser skills get core --full`을 실행해 agent-browser 사용법(snapshot-and-ref 워크플로우, 네트워크 캡처 등)을 로드한다. 설치된 구버전이 `Unknown command: skills`를 반환하면 `agent-browser --help`에서 snapshot/network 명령을 로드한다. 이 오류만으로 agent-browser 자체가 불능이라고 판정하거나 폴백으로 내려가지 않는다.
 >
-> CLI가 없거나 브라우저 실행이 막힌 제한 환경에서만 Scrapling `DynamicFetcher` / Playwright `sync_api`로 정찰을 대체한다(degraded fallback). 환경 셋업·검증은 `scripts/setup.ps1`(Windows) 또는 `scripts/bootstrap.py` + `scripts/preflight.py`.
+> CLI가 없거나 브라우저 실행이 막힌 제한 환경에서만 아래 **정찰 폴백 티어**로 내려간다. 환경 셋업·검증은 `scripts/setup.ps1`(Windows) 또는 `scripts/bootstrap.py` + `scripts/preflight.py`.
+>
+> | 티어 | 도구 | host |
+> |---|---|---|
+> | 표준 | `agent-browser` | 양 host 공통 |
+> | 폴백 1 (Claude) | **Claude in Chrome** (`mcp__claude-in-chrome__*`) | Claude Code / Cowork 전용 |
+> | 폴백 1 (Codex) | **ChatGPT Chrome 플러그인 Browser Use** (`chrome:control-chrome`) | Codex 전용 (Chrome 확장 연결 시) |
+> | 폴백 2 (공통) | Scrapling `DynamicFetcher` / Playwright `sync_api` | 양 host 공통 |
+>
+> **host별 분기:** Claude Code/Cowork는 `agent-browser → Claude in Chrome → 폴백 2`, Codex는 `agent-browser → ChatGPT Chrome Browser Use(연결 시) → 폴백 2`다. Codex에 `chrome:control-chrome` 스킬이 없거나 ChatGPT Chrome 확장이 연결되지 않으면 Codex 폴백 1을 건너뛴다. Codex에서 Claude in Chrome을 찾지 않는다.
+>
+> 폴백을 썼으면 어느 티어였는지 Step 5-A의 profile.json `notes`에 남긴다.
 
 ### 정찰 규칙
 - agent-browser 접근 **최대 2회** 시도
@@ -124,6 +135,58 @@ agent-browser에서 네트워크 요청을 캡처하여 API를 식별한다.
 - WebSquare, SAP UI5, Oracle ADF 등 엔터프라이즈 SPA 프레임워크 사용
 - URL이 변하지 않는 SPA 내비게이션 (메뉴 클릭해도 URL 동일)
 - XHR 요청에 서버 측 세션 토큰이 자동 포함됨
+
+### Claude in Chrome 폴백 절차 (폴백 1)
+
+agent-browser를 못 쓸 때 Claude 계열 host에서 쓴다. **사용자의 실제 Chrome**을 조종하므로 실제 쿠키·실제 IP가 그대로 붙는 것이 장점이다. 정찰 항목 5개는 그대로 대체된다.
+
+| 정찰 항목 | 도구 |
+|---|---|
+| ① 스냅샷·DOM 구조 | `read_page` (a11y tree, `filter:"interactive"` / `depth` / `ref_id`로 축소) + `computer` 스크린샷 |
+| ② 로딩 방식 판단 | `javascript_tool` — `#__next`/`#root`/`[data-reactroot]` 유무, 초기 DOM에 아이템이 있는지 |
+| ③ CSS 셀렉터 | `javascript_tool` — 반복되는 `tag.class` 조합을 집계해 item_root 후보 도출 |
+| ④ pagination | `javascript_tool` — `li.next a`/pager 텍스트/URL 패턴 |
+| ⑤ 총 건수 | `javascript_tool` |
+
+**네트워크 감시는 제약이 있다 (실측).** 아래 절차를 그대로 따르지 않으면 API를 못 찾는다.
+
+1. **arming** — `read_network_requests`는 **처음 호출한 시점부터** 추적을 시작한다. 페이지를 연 직후 한 번 호출해 무장한다.
+2. **navigate는 버퍼를 비운다** — 전체 리로드뿐 아니라 **SPA pushState 내비게이션에서도** 캡처가 초기화된다. 따라서 *페이지 로드 중에 나가는 XHR은 구조적으로 못 잡는다*.
+3. **로드 후 액션으로 XHR을 재발생시킨다** — 스크롤(infinite scroll), 필터/정렬 변경, 다음 페이지 버튼 등 **내비게이션을 일으키지 않는** 상호작용을 준 뒤 `read_network_requests`를 읽는다.
+4. **응답 본문은 안 나온다** — URL·method·statusCode만 반환한다. 위 "API 식별 2단계"의 2단계(JSON 필드 매칭)를 하려면, 후보 URL을 `javascript_tool`에서 페이지 컨텍스트로 재호출한다:
+   ```js
+   // 페이지 컨텍스트라 세션 쿠키·헤더가 그대로 탑승한다 (정찰용 1회 호출)
+   await fetch('<후보 API URL>', {cache:'no-store'}).then(r => r.json())
+   ```
+   `fetch`·`XMLHttpRequest` 둘 다 캡처 대상임은 확인됐다. 광고·분석 픽셀(criteo/adnxs/facebook 등)이 다수 섞이므로 `urlPattern`으로 1st-party 도메인을 걸러 읽는다.
+
+> **여기서도 수집은 금지다.** `javascript_tool`은 구조 파악과 API 후보 1회 검증에만 쓴다. 페이지 안에서 루프 돌려 전량 추출하는 것은 절대 규칙 2 위반 — 수집은 `crawl_script.py`로 한다.
+>
+> **원격 전용 환경(Cowork)에서는 정찰까지만 가능하다.** 샌드박스 egress가 기본 "package managers only"라 대상 사이트 직접 접속이 막히고, 통과시켜도 데이터센터 IP라 안티봇 프로필이 재현되지 않으며, VM에서 호스트 Chrome의 CDP 포트(9222)에 붙을 수 없어 Akamai 대응이 불가능하다. 원격에서는 정찰 → profile.json 갱신까지 하고, 수집은 로컬에서 이어서 실행한다.
+
+### ChatGPT Chrome Browser Use 폴백 절차 (Codex 폴백 1)
+
+agent-browser를 못 쓰고 현재 Codex 세션에 `chrome:control-chrome` 스킬이 있으며 사용자의 ChatGPT Chrome 확장이 연결돼 있을 때만 쓴다. 스킬을 먼저 읽고 그 Bootstrap·Chrome 선택 절차를 그대로 따른다. 반드시 `agent.browsers.get("chrome")`으로 **Chrome을 명시 선택**하고, 연결 후 `chrome.nameSession(...)`을 호출한 다음 탭을 생성하거나 사용자가 지정한 탭을 claim한다. 다른 브라우저 surface로 자동 대체하지 않는다.
+
+이 경로는 **사용자의 실제 Chrome**을 조종하므로 기존 브라우저 상태·로그인 세션·실제 IP가 적용되는 것이 장점이다. 단 브라우저 쿠키·localStorage·프로필·비밀번호를 직접 조회하지 않는다.
+
+| 정찰 항목 | Browser Use API |
+|---|---|
+| ① 스냅샷·DOM 구조 | `tab.playwright.domSnapshot()` + 필요 시 `tab.screenshot()` |
+| ② 로딩 방식 판단 | `tab.playwright.evaluate()`의 read-only page scope에서 `#__next`/`#root`/`[data-reactroot]`·초기 아이템 유무 확인 |
+| ③ CSS 셀렉터 | `tab.playwright.locator()`의 `count()` 또는 read-only `evaluate()`로 반복되는 `tag.class` 조합과 매칭 개수만 집계 |
+| ④ pagination | `locator()`/`evaluate()`로 next/pager URL·텍스트 확인 후 `expectNavigation()` + `click()`으로 1회 검증 |
+| ⑤ 총 건수 | read-only `evaluate()`로 표시 총계 또는 `총 페이지 × 페이지당 건수` 확인 |
+
+**네트워크 감시는 제한적이다 (실측).**
+
+1. `tab.capabilities.list()`에 `pageAssets`가 있으면 해당 capability의 `documentation()`을 먼저 읽고 `pageAssets.list()`로 현재 페이지에서 관찰된 script/image/stylesheet/font URL을 확인한다.
+2. Browser Use 공개 API는 일반 document/XHR/fetch 요청 목록과 응답 status/header/body 캡처를 제공하지 않는다. read-only `evaluate()` scope에서도 `window.performance`/`document.defaultView.performance`를 사용할 수 없었다.
+3. 따라서 `/api/`·`/graphql/`·`/v1/` 후보나 JSON 응답 필드 매핑이 필요한 사이트는 **네트워크 감시 부분에 한해** 폴백 2의 Playwright `sync_api`(`page.on("response")`)를 병행한다. profile.json `notes`에는 `Codex 폴백 1 Chrome Browser Use + 폴백 2 network 보조`처럼 둘 다 기록한다.
+
+**실측 기준 (2026-08-19):** 실제 ChatGPT Chrome 확장 세션의 `books.toscrape.com`에서 DOM 스냅샷, `article.product_pod` 20개, `catalogue/page-{n}.html`, `Page 1 of 50`, 총 1000건을 재현했고 다음 페이지 클릭으로 `page-2.html → page-3.html` 패턴을 확인했다. `pageAssets`는 31개(이미지 21, 스크립트 6, 스타일시트 4)를 관찰했다. 이 사이트는 정적이라 XHR/API 후보는 없었다.
+
+> **여기서도 수집은 금지다.** Browser Use의 `evaluate()`/locator는 구조·셀렉터·페이지네이션·건수 판정에만 쓴다. DOM을 루프로 전량 추출하지 않는다. 수집은 반드시 `crawl_script.py` 안의 Scrapling 또는 Playwright로 한다.
 
 ### Step 2-A: 인증 처리
 

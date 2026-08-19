@@ -133,7 +133,9 @@ python scripts/sync_domain_list.py --check  # 어긋나면 exit 1
 
 ## 핵심 도구
 
-- **agent-browser** (Playwright): 정찰 전용 — 사이트 구조 파악, 네트워크 감시, 수동 로그인, 시각적 확인
+- **agent-browser** (Playwright): 정찰 전용 (표준) — 사이트 구조 파악, 네트워크 감시, 수동 로그인, 시각적 확인
+- **Claude in Chrome** (`mcp__claude-in-chrome__*`): 정찰 **폴백 1 (Claude)** — agent-browser를 못 쓸 때만. Claude 계열 host(Claude Code/Cowork) 전용. 사용자 실제 Chrome을 조종 → 실제 쿠키·실제 IP. 절차는 SKILL.md Step 2 "Claude in Chrome 폴백 절차"
+- **ChatGPT Chrome 플러그인 Browser Use** (`chrome:control-chrome`): 정찰 **폴백 1 (Codex)** — agent-browser를 못 쓰고 ChatGPT Chrome 확장이 연결될 때만. 사용자의 실제 Chrome 상태·세션·IP를 활용하되 쿠키·스토리지를 직접 읽지 않는다. 일반 XHR/fetch 응답 캡처는 지원하지 않아 필요 시 폴백 2의 Playwright `sync_api`로 네트워크 감시만 보조한다. 절차는 SKILL.md Step 2 "ChatGPT Chrome Browser Use 폴백 절차"
 - **Scrapling** (Python): 수집 전용 — HTTP/브라우저 기반 데이터 수집, 셀렉터 자가 치유
 - **openpyxl** (Python): 엑셀 파일 생성
 - **DomainProfile** (`scripts/domain_profile.py`): 도메인 히스토리 load/save — 절대 규칙 0의 실행 도구
@@ -144,13 +146,15 @@ python scripts/sync_domain_list.py --check  # 어긋나면 exit 1
 |------|------|------|
 | **도메인 히스토리 조회/저장** | **DomainProfile (`scripts/domain_profile.py`)** | **재정찰 비용 회피 — 절대 규칙 0** |
 | 사이트 열어서 구조 파악 | agent-browser | 시각적 확인, 네트워크 감시 가능 |
+| 〃 — agent-browser 불가 시 | Claude in Chrome(Claude) / ChatGPT Chrome Browser Use(Codex, 연결 시) → DynamicFetcher/Playwright | host별 폴백 티어. 어느 티어를 썼는지 profile `notes`에 기록 |
 | 수동 로그인 + 쿠키/JWT 추출 | agent-browser | 사용자 상호작용 필요 |
 | 대량 데이터 수집 | Scrapling | 빠름, Fetcher 계층, 자가 치유 |
 | Akamai/Naver antibot 수집 | Chrome CDP (`scripts/chrome_cdp.py`) | StealthyFetcher로 못 뚫림 |
 | 진행상황 체크포인트 | `scripts/progress.py` | 장시간 수집 시 pause/resume 지원 |
 | 엑셀 출력 | openpyxl (`scripts/export_excel.py`) | 공통 모듈 |
 
-**절대 agent-browser로 대량 수집하지 않는다.** 정찰과 수집은 분리.
+**절대 agent-browser로 대량 수집하지 않는다.** 정찰과 수집은 분리. **Claude in Chrome과 ChatGPT Chrome Browser Use도 동일** — 정찰 전용이며 브라우저에서 전량 추출하는 것은 절대 규칙 2 위반.
+**원격 전용 환경(Cowork 등)에서는 정찰까지만 가능하다.** 샌드박스 egress 기본값이 "package managers only"라 대상 사이트 접속이 막히고, 통과시켜도 데이터센터 IP라 안티봇 프로필이 재현되지 않으며, VM에서 호스트 Chrome CDP(9222)에 못 붙어 Akamai 대응이 죽는다. 원격은 정찰 → profile.json 갱신까지, 수집은 로컬에서.
 **절대 profile 조회 없이 정찰부터 시작하지 않는다.** profile 우선.
 
 ## Fetcher 선택 의사결정 트리
