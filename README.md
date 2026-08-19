@@ -207,11 +207,25 @@ JS 렌더링 필요?   → DynamicFetcher (브라우저 렌더링)
 - **`notes` 비우지 않기.** "Akamai라 chrome_cdp 필수", "review API는 HTML 반환" 같은 결정적 메타 정보.
 - **자격증명 박지 않기.** profile.json은 commit 대상이므로 API key/토큰/쿠키는 별도 파일로 분리.
 
-현재 12개 도메인 프로필이 포함되어 있습니다: `books.toscrape.com`, `brand.naver.com`, `builtini.co.kr`, `coupang.com`, `data.seoul.go.kr`, `fin.land.naver.com`, `g2b.go.kr`, `made-in-china.com`, `smartstore.naver.com`, `wanted.co.kr`, `www.fss.or.kr`, `www.kurly.com`.
+현재 19개 도메인 프로필이 포함되어 있습니다: `books.toscrape.com`, `brand.naver.com`, `builtini.co.kr`, `celimax.co.kr`, `coupang.com`, `data.seoul.go.kr`, `db.itkc.or.kr`, `fin.land.naver.com`, `g2b.go.kr`, `guesskorea.com`, `made-in-china.com`, `oliveyoung.co.kr`, `smartstore.naver.com`, `wanted.co.kr`, `www.11st.co.kr`, `www.fss.or.kr`, `www.gsmarena.com`, `www.instagram.com`, `www.kurly.com`.
 
 ---
 
-## 출력 구조
+## 레포 구조
+
+**이 레포 하나가 전부입니다.** 별도의 내부 저장소는 없습니다. 커밋되는 것은 코드와 수집 레시피뿐이고, **실제로 수집한 데이터는 어떤 경로로도 커밋되지 않습니다.**
+
+| 경로 | 상태 | 내용 |
+|------|------|------|
+| `scripts/` · `.claude/` · `.codex/` · `.agents/` | ✓ tracked | 공통 모듈, 에이전트 지시서·스킬 |
+| `fingerprints/<도메인>/profile.json` | ✓ tracked | 도메인 수집 레시피 (자격증명 제외) |
+| `output/` | 로컬 전용 | 수집 결과물 — 제3자 콘텐츠·PII 가능 |
+| `autoresearch-web-crawler/` | 로컬 전용 | 스킬 평가 실험 run 데이터 |
+| `docs/` | 로컬 전용 | 내부 기획·설계 노트 |
+| `fingerprints/elements_storage.db` | 로컬 전용 | Scrapling 셀렉터 자가치유 DB |
+| `**/cookies*.json` · `**/auth*.json` | 로컬 전용 | 로그인 쿠키·토큰 |
+
+### 출력 디렉터리
 
 ```
 output/                              # gitignore — 수집 결과물
@@ -239,10 +253,15 @@ fingerprints/                        # gitignore + whitelist
 
 ## .gitignore 정책
 
-`fingerprints/**`를 통째로 ignore하되 `profile.json`과 `recipe.md`만 whitelist로 commit. 이어서 `**/cookies*.json`, `**/auth*.json`, `**/*token*.json`, `**/*secret*` 패턴으로 자격증명을 재차단(last-match-wins).
+단일 public 레포이므로, 수집한 데이터가 실수로 공개되지 않도록 세 겹으로 막습니다.
+
+1. **수집 결과물 통째 차단** — `output/`, `crawl_data/`, `autoresearch-web-crawler/`, `docs/`. 스크랩한 제3자 콘텐츠(리뷰 본문·작성자명 등)가 레포에 들어가지 않습니다.
+2. **fingerprints whitelist** — `fingerprints/**`를 통째로 ignore하되 `profile.json`과 `recipe.md`만 whitelist로 commit.
+3. **자격증명 재차단** — `**/cookies*.json`, `**/auth*.json`, `**/*token*.json`, `**/*secret*` 를 whitelist **뒤에** 배치해 last-match-wins로 다시 막습니다.
 
 ```bash
 git check-ignore -v <path>           # 어떤 패턴에 막혔는지 확인
+git diff --cached --name-only        # commit 직전 무엇이 올라가는지 확인
 ```
 
 ## 참고 문서
