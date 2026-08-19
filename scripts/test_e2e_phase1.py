@@ -12,11 +12,12 @@ from datetime import datetime
 from urllib.parse import urljoin
 
 
-def test_e2e_books_toscrape():
+def test_e2e_books_toscrape(tmp_path):
     """books.toscrape.com에서 책 제목, 가격, 평점을 수집하여 엑셀로 출력."""
     logger = setup_logger("e2e_test")
-    output_dir = os.path.join(os.path.dirname(__file__), "..", "output")
-    os.makedirs(output_dir, exist_ok=True)
+    # 산출물은 tmp_path 아래로. 실제 output/ 에 쓰면 도메인별 폴더 규약을 어기고
+    # pytest 를 돌릴 때마다 output/ 루트에 파편이 쌓인다.
+    output_dir = str(tmp_path)
 
     # === Step 1: 수집 ===
     logger.info("=== E2E Test Start: books.toscrape.com ===")
@@ -119,7 +120,6 @@ def test_e2e_books_toscrape():
     logger.info(f"Excel verification passed: {ws.max_row - 1} data rows")
 
     logger.info("=== E2E Test PASSED ===")
-    return excel_path
 
 
 if __name__ == "__main__":

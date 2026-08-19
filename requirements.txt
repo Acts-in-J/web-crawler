@@ -11,7 +11,8 @@
 #       따라서 playwright install 을 따로 또 실행할 필요 없음 (중복).
 #
 # 참고: bare `scrapling` 은 파서만 설치된다. fetcher 런타임(curl_cffi/playwright/patchright 등)은
-#       [fetchers] extra 로 들어오므로 아래처럼 extra 를 반드시 포함해야 smoke_test 가 통과한다.
+#       [fetchers] extra 로 들어오므로 아래처럼 extra 를 반드시 포함해야 한다.
+#       (검증: python scripts/preflight.py)
 
 scrapling[fetchers]>=0.4.8   # 수집 엔진 + fetcher 런타임 일괄(click, curl_cffi, playwright, patchright, browserforge, msgspec, anyio, apify-fingerprint-datapoints)
 protego>=0.3.0               # robots.txt 파서 (Step 5 robots 확인 등 런타임에서 사용)

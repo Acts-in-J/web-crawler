@@ -69,11 +69,12 @@ def test_e2e_selector_self_healing(tmp_path):
     logger.info("=== Selector Self-Healing Test PASSED ===")
 
 
-def test_e2e_domain_profile():
+def test_e2e_domain_profile(tmp_path):
     """도메인 프로필 저장/로드/재사용 검증."""
     logger = setup_logger("e2e_phase5_profile")
-    output_dir = os.path.join(os.path.dirname(__file__), "..", "output")
-    os.makedirs(output_dir, exist_ok=True)
+    # 산출물은 tmp_path 아래로. 실제 output/ 에 쓰면 도메인별 폴더 규약을 어기고
+    # pytest 를 돌릴 때마다 output/ 루트에 파편이 쌓인다.
+    output_dir = str(tmp_path)
 
     logger.info("=== Phase 5 E2E: Domain Profile Save/Reuse ===")
 
@@ -231,14 +232,15 @@ def test_e2e_pii_detection():
     logger.info("=== PII Detection Test PASSED ===")
 
 
-def test_e2e_full_pipeline():
+def test_e2e_full_pipeline(tmp_path):
     """전체 파이프라인 통합: 수집→정제→PII 확인→엑셀 출력."""
     from scrapling.fetchers import Fetcher
     from utils import RateLimiter
 
     logger = setup_logger("e2e_phase5_pipeline")
-    output_dir = os.path.join(os.path.dirname(__file__), "..", "output")
-    os.makedirs(output_dir, exist_ok=True)
+    # 산출물은 tmp_path 아래로. 실제 output/ 에 쓰면 도메인별 폴더 규약을 어기고
+    # pytest 를 돌릴 때마다 output/ 루트에 파편이 쌓인다.
+    output_dir = str(tmp_path)
 
     logger.info("=== Phase 5 E2E: Full Pipeline (books.toscrape.com) ===")
 
@@ -332,7 +334,6 @@ def test_e2e_full_pipeline():
         shutil.rmtree(profile_dir)
 
     logger.info("=== Full Pipeline Test PASSED ===")
-    return excel_path
 
 
 if __name__ == "__main__":

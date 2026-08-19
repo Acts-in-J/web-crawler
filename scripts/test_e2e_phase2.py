@@ -14,11 +14,12 @@ from scrapling.fetchers import Fetcher
 from datetime import datetime
 
 
-def test_e2e_api_collection():
+def test_e2e_api_collection(tmp_path):
     """jsonplaceholder.typicode.com API에서 posts 제목, 작성자ID를 수집하여 엑셀로 출력."""
     logger = setup_logger("e2e_phase2_api")
-    output_dir = os.path.join(os.path.dirname(__file__), "..", "output")
-    os.makedirs(output_dir, exist_ok=True)
+    # 산출물은 tmp_path 아래로. 실제 output/ 에 쓰면 도메인별 폴더 규약을 어기고
+    # pytest 를 돌릴 때마다 output/ 루트에 파편이 쌓인다.
+    output_dir = str(tmp_path)
 
     # === Step 1: API 수집 (Fetcher + resp.json()) ===
     logger.info("=== Phase 2 E2E: API Collection (jsonplaceholder) ===")
@@ -92,14 +93,14 @@ def test_e2e_api_collection():
     logger.info(f"Excel saved: {excel_path} ({ws.max_row - 1} rows)")
 
     logger.info("=== API Collection Test PASSED ===")
-    return excel_path
 
 
-def test_auth_token_lifecycle():
+def test_auth_token_lifecycle(tmp_path):
     """인증 토큰 저장/로드/만료 생명주기 테스트."""
     logger = setup_logger("e2e_phase2_auth")
-    output_dir = os.path.join(os.path.dirname(__file__), "..", "output")
-    os.makedirs(output_dir, exist_ok=True)
+    # 산출물은 tmp_path 아래로. 실제 output/ 에 쓰면 도메인별 폴더 규약을 어기고
+    # pytest 를 돌릴 때마다 output/ 루트에 파편이 쌓인다.
+    output_dir = str(tmp_path)
 
     logger.info("=== Phase 2 E2E: Auth Token Lifecycle ===")
 

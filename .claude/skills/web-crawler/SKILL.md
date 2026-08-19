@@ -335,3 +335,4 @@ export_to_excel(data, filepath)
 | `references/fetcher-patterns.md` | 모든 수집 패턴의 코드 템플릿 | Step 4에서 crawl_script.py 생성 시 |
 | `references/antibot-strategies.md` | Akamai, SPA 세션, Cloudflare 대응 전략 | Step 3에서 안티봇 감지 시 |
 | `references/troubleshooting.md` | 실패 사례와 해결책 | 수집 실패 시 원인 진단 |
+| `scripts/scrapling_reference.md` | Scrapling API 레퍼런스 (Fetcher 종류·Selector·Spider·세션) | 라이브러리 사용법이 헷갈릴 때 |

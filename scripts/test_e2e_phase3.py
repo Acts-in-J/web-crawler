@@ -9,7 +9,7 @@ from export_excel import export_to_excel
 from datetime import datetime
 
 
-def test_e2e_dynamic_fetcher():
+def test_e2e_dynamic_fetcher(tmp_path):
     """DynamicFetcher로 JS 렌더링이 필요한 사이트를 수집하여 엑셀로 출력.
 
     quotes.toscrape.com/js/ 는 JavaScript로 데이터를 렌더링하는 버전.
@@ -18,8 +18,9 @@ def test_e2e_dynamic_fetcher():
     from scrapling.fetchers import Fetcher, DynamicFetcher
 
     logger = setup_logger("e2e_phase3_dynamic")
-    output_dir = os.path.join(os.path.dirname(__file__), "..", "output")
-    os.makedirs(output_dir, exist_ok=True)
+    # 산출물은 tmp_path 아래로. 실제 output/ 에 쓰면 도메인별 폴더 규약을 어기고
+    # pytest 를 돌릴 때마다 output/ 루트에 파편이 쌓인다.
+    output_dir = str(tmp_path)
 
     # === Step 1: 일반 Fetcher로 실패 확인 ===
     logger.info("=== Phase 3 E2E: DynamicFetcher (quotes.toscrape.com/js/) ===")
@@ -99,7 +100,6 @@ def test_e2e_dynamic_fetcher():
     logger.info(f"Excel saved: {excel_path} ({ws.max_row - 1} rows)")
 
     logger.info("=== DynamicFetcher Test PASSED ===")
-    return excel_path
 
 
 def test_e2e_escalation_chain():

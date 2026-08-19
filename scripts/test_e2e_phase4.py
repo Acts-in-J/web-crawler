@@ -12,7 +12,7 @@ from progress import ProgressTracker
 from datetime import datetime
 
 
-def test_e2e_spider_collection():
+def test_e2e_spider_collection(tmp_path):
     """Spider로 books.toscrape.com 전체를 수집 + ProgressTracker 통합.
 
     books.toscrape.com은 1000건(50페이지 x 20건).
@@ -21,9 +21,10 @@ def test_e2e_spider_collection():
     from scrapling.spiders import Spider, Request, Response
 
     logger = setup_logger("e2e_phase4_spider")
-    output_dir = os.path.join(os.path.dirname(__file__), "..", "output")
-    crawl_dir = os.path.join(os.path.dirname(__file__), "..", "crawl_data_test")
-    os.makedirs(output_dir, exist_ok=True)
+    # 산출물은 tmp_path 아래로. 실제 output/ 에 쓰면 도메인별 폴더 규약을 어기고
+    # pytest 를 돌릴 때마다 output/ 루트에 파편이 쌓인다.
+    output_dir = str(tmp_path)
+    crawl_dir = str(tmp_path / "crawl_data")   # repo 루트에 crawl_data_test 를 만들지 않는다
 
     # Clean up previous test crawl data
     if os.path.exists(crawl_dir):
@@ -152,16 +153,16 @@ def test_e2e_spider_collection():
         os.remove(progress_path)
 
     logger.info("=== Spider Collection Test PASSED ===")
-    return excel_path
 
 
-def test_e2e_session_checkpoint():
+def test_e2e_session_checkpoint(tmp_path):
     """Session 기반 중간 저장 + Resume 패턴 검증."""
     from scrapling.fetchers import Fetcher
 
     logger = setup_logger("e2e_phase4_checkpoint")
-    output_dir = os.path.join(os.path.dirname(__file__), "..", "output")
-    os.makedirs(output_dir, exist_ok=True)
+    # 산출물은 tmp_path 아래로. 실제 output/ 에 쓰면 도메인별 폴더 규약을 어기고
+    # pytest 를 돌릴 때마다 output/ 루트에 파편이 쌓인다.
+    output_dir = str(tmp_path)
 
     logger.info("=== Phase 4 E2E: Session Checkpoint + Resume ===")
 
