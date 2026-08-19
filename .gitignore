@@ -32,9 +32,5 @@ naver_auth.json
 # 사이트 수집 아카이브 — 독립 git 저장소 + 대용량 tar.gz (모노레포에서 제외)
 sites/
 
-# 내부 전용 — autoresearch 실험 run 데이터(스크랩한 제3자 리뷰/작성자명 포함)
-# 아카이브: github.com/byungjunjang/web-crawling-research (private)
-autoresearch-web-crawler/
-
-# 내부 기획/설계 문서
-docs/
+# sync_public.py 가 자동 관리하는 public 레포 작업본 (파생물 — 언제든 삭제 가능)
+.publish-mirror/
