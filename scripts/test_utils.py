@@ -18,18 +18,20 @@ from utils import (
 
 
 def test_rate_limiter_enforces_delay():
-    limiter = RateLimiter(delay=0.1)
+    # delay 하한(0.5) 이 있으므로 그 이상 값으로 검증한다 — P2-3
+    limiter = RateLimiter(delay=0.5)
     start = time.time()
     limiter.wait()
     limiter.wait()
     elapsed = time.time() - start
-    assert elapsed >= 0.1
+    assert elapsed >= 0.5
 
 
 def test_rate_limiter_backoff_on_429():
-    limiter = RateLimiter(delay=0.1)
+    # delay 하한(0.5) 이하 값은 하한으로 올라가므로 하한 이상 값으로 검증한다 — P2-3
+    limiter = RateLimiter(delay=0.5)
     limiter.backoff()
-    assert limiter.delay == 0.2  # doubled
+    assert limiter.delay == 1.0  # doubled
 
 
 def test_validate_url_valid():
@@ -289,3 +291,54 @@ def test_pii_ignores_innocent_columns():
 def test_pii_still_detects_values():
     """기존 값 기반 감지는 그대로 동작한다."""
     assert detect_pii([{"메모": "문의는 a@b.com 으로"}])
+
+
+# ── P2-3: 부담 상한 ──
+from utils import BudgetExceeded, RateLimiter
+
+
+def test_delay_floor_is_enforced():
+    """0 이나 음수로 사실상 무제한 요청을 내는 것을 막는다."""
+    assert RateLimiter(delay=0).delay >= 0.5
+    assert RateLimiter(delay=-1).delay >= 0.5
+
+
+def test_backoff_still_doubles():
+    limiter = RateLimiter(delay=1.0)
+    limiter.backoff()
+    assert limiter.delay == 2.0
+
+
+def test_backoff_stops_after_consecutive_limit():
+    """429 가 계속 오면 상대가 거절하고 있는 것이다 — 무한 백오프는 답이 아니다."""
+    limiter = RateLimiter(delay=1.0, max_consecutive_errors=3)
+    limiter.backoff()
+    limiter.backoff()
+    with pytest.raises(BudgetExceeded) as exc:
+        limiter.backoff()
+    assert "연속" in str(exc.value)
+
+
+def test_success_resets_consecutive_counter():
+    limiter = RateLimiter(delay=1.0, max_consecutive_errors=3)
+    limiter.backoff()
+    limiter.backoff()
+    limiter.reset_errors()
+    limiter.backoff()          # 리셋됐으므로 아직 여유가 있다
+    assert limiter.delay == 8.0
+
+
+def test_total_request_cap():
+    limiter = RateLimiter(delay=0.5, max_requests=3)
+    for _ in range(3):
+        limiter.wait()
+    with pytest.raises(BudgetExceeded) as exc:
+        limiter.wait()
+    assert "총 요청" in str(exc.value)
+
+
+def test_no_cap_by_default():
+    limiter = RateLimiter(delay=0.5)
+    for _ in range(10):
+        limiter.wait()
+    assert limiter.request_count == 10

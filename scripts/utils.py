@@ -7,22 +7,58 @@ import time
 from urllib.parse import urlparse
 
 
-class RateLimiter:
-    """요청 간 대기를 관리하는 rate limiter."""
+class BudgetExceeded(Exception):
+    """수집 부담 상한을 넘었다. 계속 두드리지 말고 멈춘다.
 
-    def __init__(self, delay: float = 1.0):
-        self.delay = delay
+    부담은 접근과 별개 축이고 여기에도 형사 층이 있다(업무방해). 429 가 반복된다는 것은
+    상대가 거절하고 있다는 뜻이지 더 기다리면 될 문제가 아니다.
+    """
+
+
+class RateLimiter:
+    """요청 간 대기 + 총량·연속실패 상한.
+
+    delay 하한이 있는 이유: 0 을 넣어 사실상 무제한으로 두드리는 것을 막는다.
+    """
+
+    MIN_DELAY = 0.5
+
+    def __init__(self, delay: float = 1.0, min_delay: float = MIN_DELAY,
+                 max_requests: int | None = None, max_consecutive_errors: int = 3):
+        self.min_delay = max(min_delay, 0.0)
+        self.delay = max(delay, self.min_delay)
+        self.max_requests = max_requests
+        self.max_consecutive_errors = max_consecutive_errors
+        self.request_count = 0
+        self.consecutive_errors = 0
         self._last_request = 0.0
 
     def wait(self):
+        if self.max_requests is not None and self.request_count >= self.max_requests:
+            raise BudgetExceeded(
+                f"총 요청 상한({self.max_requests}건)에 도달했습니다. "
+                "필요한 만큼만 가져오는 것이 부담 축의 핵심입니다 — "
+                "정말 더 필요하면 max_requests 를 명시적으로 올리세요"
+            )
         elapsed = time.time() - self._last_request
         if elapsed < self.delay:
             time.sleep(self.delay - elapsed)
         self._last_request = time.time()
+        self.request_count += 1
 
     def backoff(self):
-        """HTTP 429 등 rate limit 시 대기 시간 2배 증가."""
+        """HTTP 429/503 등에서 대기 2배. 연속 한도를 넘으면 하드 중단."""
+        self.consecutive_errors += 1
+        if self.consecutive_errors >= self.max_consecutive_errors:
+            raise BudgetExceeded(
+                f"연속 {self.consecutive_errors}회 rate limit 응답을 받았습니다. "
+                "상대가 거절하고 있는 것이지 더 기다리면 될 문제가 아닙니다 — 중단합니다"
+            )
         self.delay *= 2
+
+    def reset_errors(self):
+        """요청이 성공했을 때 연속 카운터를 리셋한다."""
+        self.consecutive_errors = 0
 
 
 def validate_url(url: str) -> bool:
