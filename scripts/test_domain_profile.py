@@ -459,6 +459,40 @@ def test_consent_dropped_when_profile_downgrades_to_public(tmp_path):
     assert _distribution(reloaded) == "public"
 
 
+def test_seam_recrossing_asks_again(tmp_path):
+    """B → A → B 로 돌아온 도메인은 다시 통지를 요구한다 — 왕복 전체를 건다.
+
+    위 테스트는 내려가는 쪽(consent 가 지워진다)만 본다. 문서가 말하는 규칙은 그 다음
+    절반이다: **통지는 도메인당 1회가 아니라 이음매를 통과할 때마다 1회다.** 면제하는 것은
+    도메인이 아니라 프로필이 *지금 들고 있는* consent 기록이고, 그 기록은 프로필이 배포
+    대상이 되는 순간 지워지므로 — 사용자의 통지 이력을 배포되는 파일에 실어 보내지 않기
+    위해 — 사이트가 나중에 새 보호를 걸면 들고 있는 기록이 없다.
+
+    이 왕복이 테스트로 고정돼 있지 않으면 "sticky 니까 한 번이면 된다" 는 오독이 조용히
+    돌아온다. 실제로 SKILL.md 는 이 규칙을 '도메인당 한 번' 이라고 잘못 적고 있었다.
+    """
+    mgr = DomainProfile(base_dir=str(tmp_path))
+
+    # ① 최초 이음매 통과 — 통지하고 기록한다
+    mgr.save("example.com", {
+        "domain": "example.com", "fetcher_type": "chrome_cdp",
+        "antibot_strategy": "chrome_cdp",
+        "consent": {"notified_at": "2026-08-20T00:00:00+09:00", "choice": "proceed"},
+    })
+    assert mgr.load("example.com")["consent"]["choice"] == "proceed"
+
+    # ② 사이트가 차단을 풀어 사다리 A 로 내려온다 — 배포 대상이 되며 기록이 지워진다.
+    #    antibot_strategy 는 sticky 라 생략하면 상속되므로, 실제로 내려왔음을 명시한다.
+    mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Fetcher",
+                             "antibot_strategy": "none"})
+    assert "consent" not in mgr.load("example.com")
+
+    # ③ 사이트가 새 보호를 건다 — 들고 있는 기록이 없으므로 게이트가 다시 발화한다
+    with pytest.raises(ConsentRequired):
+        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "chrome_cdp",
+                                 "antibot_strategy": "chrome_cdp"})
+
+
 # ── P2-4 백스톱 ②: 손상된 기존 프로필을 조용히 덮어쓰지 않는다 ──
 
 def test_save_backs_up_corrupt_profile_before_overwrite(tmp_path):
