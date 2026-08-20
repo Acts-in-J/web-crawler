@@ -203,6 +203,72 @@ def test_first_escalation_still_requires_consent(tmp_path):
                                        "fetcher_type": "chrome_cdp"})
 
 
+def test_consent_required_when_sticky_local_has_no_consent_to_inherit(tmp_path):
+    """분류가 sticky 병합으로만 넘어와도 게이트는 걸린다 — 상속할 consent 가 없기 때문이다.
+
+    이 테스트가 잡는 회귀: distribution() 을 병합 전 caller dict 에 대해 계산하도록
+    바꾼 변형은, consent 를 post-merge 로 읽더라도 이 케이스를 그냥 통과시킨다 —
+    merge 전 profile 은 fetcher_type: "Fetcher" 하나뿐이라 rung 1(공개)로 보이기
+    때문이다. 실제로 저장될 profile 은 sticky 로 "local" 을 물려받는데도 게이트가
+    발화하지 않는다."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    target = tmp_path / "example_com"
+    target.mkdir()
+    (target / "profile.json").write_text(
+        '{"domain": "example.com", "distribution": "local", '
+        '"distribution_reason": "robots", "fetcher_type": "Fetcher"}', encoding="utf-8")
+    with pytest.raises(ConsentRequired):
+        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Fetcher"})
+
+
+def test_consent_required_when_caller_omits_fetcher_type(tmp_path):
+    """fetcher_type 조차 없는 최초 호출도 (rung 0 · default-deny) 게이트가 막는다."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    with pytest.raises(ConsentRequired):
+        mgr.save("example.com", {"domain": "example.com"})
+
+
+@pytest.mark.parametrize("malformed_consent", ["proceed", ["proceed"], 123])
+def test_malformed_consent_raises_consent_required_not_a_traceback(tmp_path, malformed_consent):
+    """consent 가 잘못된 형태(문자열/리스트/숫자)여도 안내 메시지로 떨어진다 —
+    AttributeError 트레이스백이 아니라."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    with pytest.raises(ConsentRequired):
+        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "chrome_cdp",
+                                 "consent": malformed_consent})
+
+
+@pytest.mark.parametrize("choice", ["decline", "maybe-later"])
+def test_consent_choice_must_be_proceed(tmp_path, choice):
+    """'진행을 골랐다' 는 사실만 인정한다 — 그 외 choice 값은 게이트를 통과시키지 않는다.
+
+    {"choice": "decline"} 가 그냥 저장되면, 우회 레시피 옆에 '사용자가 거부했다' 는
+    기록이 나란히 남는 자기모순적인 산출물이 된다."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    with pytest.raises(ConsentRequired):
+        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "chrome_cdp",
+                                 "consent": {"notified_at": "2026-08-20T00:00:00+09:00",
+                                             "choice": choice}})
+
+
+def test_consent_dropped_when_profile_downgrades_to_public(tmp_path):
+    """consent 는 통지 이력이다 — public 으로 재분류된 프로필에 남아있으면 안 된다.
+
+    fetcher_type 은 sticky 가 아니므로, 같은 도메인을 사다리 A 도구로 다시 수집하면
+    분류가 public 으로 내려간다. 그때 이전 consent 가 남아 있으면, 배포 whitelist 에
+    들어가는 프로필이 이 사용자의 통지 이력을 실어 나르게 된다."""
+    from profile_policy import distribution as _distribution
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    mgr.save("example.com", {
+        "domain": "example.com", "fetcher_type": "chrome_cdp",
+        "consent": {"notified_at": "2026-08-20T00:00:00+09:00", "choice": "proceed"},
+    })
+    mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Fetcher"})
+    reloaded = mgr.load("example.com")
+    assert "consent" not in reloaded
+    assert _distribution(reloaded) == "public"
+
+
 # ── P2-4 백스톱 ②: 손상된 기존 프로필을 조용히 덮어쓰지 않는다 ──
 
 def test_save_backs_up_corrupt_profile_before_overwrite(tmp_path):
@@ -219,8 +285,26 @@ def test_save_backs_up_corrupt_profile_before_overwrite(tmp_path):
 
     # (a) 저장은 여전히 성공한다
     assert mgr.load("example.com")["fetcher_type"] == "Fetcher"
-    # (b) 원본이 타임스탬프가 박힌 백업 파일로 보존된다
-    backup = target / "profile.json.corrupt-20260820T120000Z"
+    # (b) 원본이 타임스탬프가 박힌 백업 파일로 보존된다 (초 미만 정밀도 — 동일 초 충돌 방지)
+    backup = target / "profile.json.corrupt-20260820T120000.000000Z"
     assert backup.exists()
     # (c) 시각은 주입한 clock 에서 나온다 — wall-clock 이 아니다
     assert backup.read_bytes() == corrupt_bytes
+
+
+def test_refused_save_leaves_corrupt_existing_file_intact(tmp_path):
+    """게이트가 거부하면 손상된 기존 파일에도 손대지 않는다 — 백업도, 삭제도 하지 않는다.
+
+    거부된 저장이 실제로 파일을 건드리면, "저장 실패" 가 "프로필 소실" 로 바뀐다 —
+    거부 직후 exists() 가 False 를 보고하게 되어버린다."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    target = tmp_path / "example_com"
+    target.mkdir()
+    corrupt_bytes = b"{not json"
+    (target / "profile.json").write_bytes(corrupt_bytes)
+
+    with pytest.raises(ConsentRequired):
+        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "chrome_cdp"})
+
+    assert (target / "profile.json").read_bytes() == corrupt_bytes
+    assert list(target.glob("profile.json.corrupt-*")) == []

@@ -74,36 +74,48 @@ class DomainProfile:
         domain_dir = os.path.join(self.base_dir, sanitize_filename(domain))
         filepath = os.path.join(domain_dir, "profile.json")
 
+        existing = {}
+        read_failed = False
         try:
             existing = self.load(domain) or {}
         except (ValueError, OSError):
             # 기존 파일이 깨졌어도 저장은 진행한다 — 수집 성공 후 게이트에서 죽으면 안 된다.
-            # 다만 조용히 덮어쓰면 그 안에 있었을 distribution 선언이 흔적 없이 사라지고
-            # rung 판정만으로 재분류된다 — sticky 병합이 막으려던 것과 같은 실패가 인코딩
-            # 경로로 되돌아오는 셈이다. 그래서 덮어쓰기 전에 원본을 백업하고 경고를 남긴다.
-            existing = {}
-            if os.path.exists(filepath):
-                backup_path = f"{filepath}.corrupt-{self._clock().strftime('%Y%m%dT%H%M%SZ')}"
-                shutil.move(filepath, backup_path)
-                setup_logger(__name__).warning(
-                    "%s: 기존 profile.json을 읽지 못해 백업 후 새로 씁니다 "
-                    "(distribution 선언이 있었다면 유실 — 백업 파일에서 복구) → %s",
-                    domain, backup_path,
-                )
+            # 다만 이 저장이 게이트에 막혀 거부되면, 손상된 원본이라도 손대지 않는다 —
+            # 거부된 저장이 기존 파일을 지워버리면 "저장 실패" 가 "프로필 소실" 이 되어버린다.
+            # 그래서 백업은 지금 하지 않고, 실제로 쓰기로 확정된 뒤로 미룬다.
+            read_failed = True
 
         for field in STICKY_FIELDS:
             if field not in profile and field in existing:
                 profile[field] = existing[field]
 
         if distribution(profile) == "local":
-            consent = profile.get("consent") or {}
-            if not consent.get("choice"):
+            consent = profile.get("consent")
+            if not isinstance(consent, dict) or consent.get("choice") != "proceed":
                 raise ConsentRequired(
                     f"{domain}: 이 프로필은 자동 접근 차단을 넘어선 방법을 기록하고 있습니다. "
                     "사용자에게 한 번 통지하고, 그 선택을 consent 블록에 남긴 뒤 저장하세요 — "
                     '예: {"notified_at": "<ISO8601>", "choice": "proceed"}. '
                     "권한 근거를 적을 필요는 없습니다."
                 )
+        else:
+            # public 으로 (재)분류된 프로필에 이전 통지 이력이 남아있으면 안 된다 — consent 는
+            # 배포되지 않는 로컬 결정의 기록이지, 배포 whitelist 에 들어갈 값이 아니다.
+            # fetcher_type 은 sticky 가 아니므로, 도구가 사다리 A로 내려온 재수집은 이 분기를
+            # 그대로 통과해 consent 를 씻어낸다.
+            profile.pop("consent", None)
+
+        # 여기까지 왔다면 이 저장은 실제로 진행된다 — 그제야 손상된 기존 파일을 백업한다.
+        if read_failed and os.path.exists(filepath):
+            backup_path = (
+                f"{filepath}.corrupt-{self._clock().strftime('%Y%m%dT%H%M%S.%fZ')}"
+            )
+            shutil.move(filepath, backup_path)
+            setup_logger(__name__).warning(
+                "%s: 기존 profile.json을 읽지 못해 백업 후 새로 씁니다 "
+                "(distribution 선언이 있었다면 유실 — 백업 파일에서 복구) → %s",
+                domain, backup_path,
+            )
 
         os.makedirs(domain_dir, exist_ok=True)
         with open(filepath, "w", encoding="utf-8") as f:
