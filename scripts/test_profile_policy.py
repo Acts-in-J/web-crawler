@@ -59,13 +59,41 @@ def test_phase_zero_routes_are_rung_one_not_unknown(value):
     assert distribution({"fetcher_type": value}) == "public"
 
 
-# ── ITEM 4(F2): 사다리 어휘와 capability 매핑이 어긋나면 infer_capability 가 조용히 None 을
-# 낸다 — 이 테스트가 있으면 새 사다리 값을 추가하면서 capability 매핑을 빠뜨리는 걸
-# 구조적으로 막는다(새 값이 하나라도 매핑을 빠뜨리면 이 테스트가 실패한다). ──
-def test_every_ladder_tool_has_a_capability_mapping():
-    from profile_policy import LADDER_A_TOOLS, LADDER_B_TOOLS, _FETCHER_TO_CAPABILITY
-    missing = (set(LADDER_A_TOOLS) | set(LADDER_B_TOOLS)) - set(_FETCHER_TO_CAPABILITY)
-    assert missing == set(), f"capability 매핑이 없는 사다리 도구: {missing}"
+# ── 레지스트리 자체의 불변식 ────────────────────────────────────────────────
+#
+# 예전에는 이름→칸 표와 이름→능력 표가 따로 있었고, 여기 있던 테스트는 두 표의 키 집합이
+# 같은지를 봤다(한쪽에만 있는 이름이 실제로 배포된 전례가 있었다). 표가 하나로 합쳐진
+# 지금 그 어긋남은 구조적으로 불가능하다 — 행 하나에 칸과 능력이 함께 들어 있으므로
+# 이름이 한쪽에만 존재할 수가 없다. 그래서 그 검사는 의미가 없어졌고, **여전히 가능한
+# 어긋남**으로 바꿔 건다: 행은 있는데 그 행의 능력 칸이 비었거나(None) 오타인 경우.
+# infer_capability 는 그때 조용히 None 을 낸다 — 사다리 값은 인식되면서 능력만 사라진다.
+def test_every_ladder_tool_declares_a_capability():
+    """사다리에 앉은 도구(rung >= 1)는 반드시 능력을 함께 선언해야 한다."""
+    from profile_policy import TOOLS
+    missing = sorted(name for name, (rung, cap, _) in TOOLS.items() if rung >= 1 and cap is None)
+    assert missing == [], f"capability 가 비어 있는 사다리 도구: {missing}"
+
+
+def test_registry_capabilities_are_all_valid():
+    """능력 칸은 CAPABILITIES 안의 값이거나 None(중립값) 이어야 한다 — 오타가 조용히 살면
+    infer_capability 가 스키마에 없는 값을 프로필에 써넣는다."""
+    from profile_policy import CAPABILITIES, TOOLS
+    bad = sorted({cap for _, cap, _ in TOOLS.values() if cap is not None and cap not in CAPABILITIES})
+    assert bad == [], f"CAPABILITIES 에 없는 능력 값: {bad}"
+
+
+def test_registry_rungs_are_in_range():
+    """칸은 0(칸 없음) 또는 1~6 이다. 7 단은 없고, 음수는 max() 계산을 조용히 뒤집는다."""
+    from profile_policy import TOOLS
+    bad = sorted(name for name, (rung, _, _) in TOOLS.items() if rung not in range(0, 7))
+    assert bad == [], f"사다리 범위를 벗어난 rung: {bad}"
+
+
+def test_withheld_tools_cannot_be_neutral():
+    """빼기로 한 도구가 중립값 자리에 들어가면(능력 None) '대응 없음' 과 구분이 사라진다."""
+    from profile_policy import TOOLS
+    bad = sorted(name for name, (_, cap, withheld) in TOOLS.items() if withheld and cap is None)
+    assert bad == [], f"withheld 인데 능력이 비어 있는 도구: {bad}"
 
 
 # ── is_unrecognized_tool: ladder_rung 이 0 으로 뭉개는 두 경우를 구분한다 ──
@@ -146,6 +174,54 @@ def test_string_unknown_tool_is_still_rescuable():
     """'읽을 수 없음' 과 '읽었지만 모르는 도구' 는 다르다 — 후자는 여전히 구제 가능하다."""
     assert distribution({"fetcher_type": "SomeInternalHelper",
                          "distribution": "public"}) == "public"
+
+
+# ── 네 술어가 비문자열에 대해 같은 답을 내는가 (호출 순서 비의존) ──
+@pytest.mark.parametrize("bad", [["chrome_cdp"], {"t": "cdp"}, 6, True, 0.5])
+def test_all_predicates_fail_closed_on_non_string(bad):
+    """비문자열의 뜻이 술어마다 달라선 안 된다 — '읽을 수 없음' 하나여야 한다.
+
+    예전에는 `ladder_rung` 만 닫히고(0) `is_withheld_tool` 은 열려서(False), 불변식이
+    distribution() 이 `_has_non_string_field` 를 먼저 호출한다는 **순서**로만 유지됐다.
+    순서는 리팩터링 한 번이면 바뀐다. 술어 각각이 스스로 닫히는지 직접 건다.
+    """
+    from profile_policy import _has_non_string_field, is_withheld_tool
+    profile = {"fetcher_type": "Fetcher", "antibot_strategy": bad}
+    assert ladder_rung(profile) == 0
+    assert is_withheld_tool(profile) is True
+    assert is_unrecognized_tool(profile) is True
+    assert _has_non_string_field(profile) is True
+
+
+def test_withheld_predicate_alone_blocks_a_non_string():
+    """distribution() 이 `_has_non_string_field` 검사를 잃어도 여전히 local 이어야 한다 —
+    그게 '순서가 아니라 구조가 불변식을 지킨다' 는 말의 실제 내용이다."""
+    from profile_policy import is_withheld_tool
+    assert is_withheld_tool({"fetcher_type": "Fetcher", "antibot_strategy": ["chrome_cdp"],
+                             "distribution": "public"})
+
+
+# ── 자리표시자는 '대응 없음' 이 아니라 '적지 않음' 이다 ──
+@pytest.mark.parametrize("placeholder", ["-", "N/A", "n/a", "???", "—", "TBD", "?", ""])
+def test_placeholder_reads_as_unknown_not_neutral(placeholder):
+    """`_norm` 이 구두점을 전부 지우기 때문에 `"-"`·`"???"` 는 빈 문자열이 되고, 예전에는
+    빈 문자열이 중립값 집합에 있어 "안티봇 대응이 필요 없었다" 로 읽혔다. `"N/A"` 는 `"na"`
+    가 되는데 그 `"na"` 도 중립값에 들어 있었다. 셋 다 정보가 아니라 공백이다 — 공백을
+    정보로 읽는 것이 이 모듈이 막으려는 fail-open 그 자체다."""
+    profile = {"fetcher_type": "Fetcher", "antibot_strategy": placeholder}
+    assert ladder_rung(profile) == 0
+    assert is_unrecognized_tool(profile)
+    assert distribution(profile) == "local"
+
+
+@pytest.mark.parametrize("value", ["none", "None", "NULL", "null"])
+def test_real_neutral_words_still_mean_no_response(value):
+    """반대 방향 — 실제 낱말로 적힌 중립값은 계속 정보로 읽혀야 한다. 자리표시자를 미상으로
+    보내면서 이쪽까지 같이 조이면 사다리 A 프로필 전체가 배포에서 빠진다."""
+    profile = {"fetcher_type": "Fetcher", "antibot_strategy": value}
+    assert ladder_rung(profile) == 1
+    assert not is_unrecognized_tool(profile)
+    assert distribution(profile) == "public"
 
 
 # ── distribution ──
