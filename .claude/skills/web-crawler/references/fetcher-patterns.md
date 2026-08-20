@@ -104,12 +104,14 @@ for page_num in range(1, max_pages + 1):
 ```python
 from utils import detect_softblock
 
-first = fetcher.get(start_url)  # 또는 .fetch(...)
+first = plain_get(start_url)    # 또는 현재 티어의 호출
 v = detect_softblock(first.html_content, status=first.status,
                      selector_hit=bool(first.css("<ITEM_SELECTOR>")))
 if v["blocked"]:
     logger.error(f"소프트블록 — {v['verdict']}: {v['signals']}")
-    raise SystemExit("수집 중단: 상위 Fetcher로 에스컬레이션 필요 (antibot-strategies.md)")
+    # 사다리 A 가 남아 있으면 다음 A 티어로. 남은 게 없으면 여기가 이음매다 —
+    # 자동으로 사다리 B 로 넘어가지 말고 사용자에게 알린다 (SKILL.md Step 3).
+    raise SystemExit("수집 중단: 사다리 A 소진 — 이음매 통지 게이트로")
 ```
 
 ### 부분 데이터 저장
@@ -128,26 +130,27 @@ CollectSpider(crawldir="./crawl_data").start()
 
 ## A: API 직접 수집
 
-API를 발견했으면 반드시 FetcherSession을 사용한다. 기본 Fetcher로 API를 호출하지 않는다.
+API를 발견했으면 반드시 세션을 사용한다 — 단발 `plain_get` 이 아니라 쿠키·연결을 유지하는 2단 세션이다.
+**`plain_session()` 을 쓴다**: 맨 `FetcherSession()` 은 기본값이 `impersonate="chrome"` +
+`stealthy_headers=True` 라 사다리 2단이 아니라 4단(지문 정렬) 행동이고, 그건 이음매 너머다(위 § 96줄).
 
 ```python
 import json, sys
 sys.path.insert(0, './scripts')
-from utils import RateLimiter, setup_logger
-from scrapling.fetchers import FetcherSession
+from utils import RateLimiter, setup_logger, plain_session
 
 logger = setup_logger("api_crawler")
 limiter = RateLimiter(delay=1.0)
 results = []
 
-with FetcherSession(impersonate='chrome') as session:
+with plain_session() as session:
     page_num = 1
     while True:
         limiter.wait()
         url = f"<API_URL>?page={page_num}&limit=<LIMIT>"
         logger.info(f"API call page {page_num}: {url}")
 
-        resp = session.get(url, stealthy_headers=True)
+        resp = session.get(url)
         if resp.status != 200:
             logger.warning(f"Status {resp.status}, stopping")
             break
@@ -180,19 +183,17 @@ with open("./output/raw_data.json", "w", encoding="utf-8") as f:
 ```python
 import json, sys
 sys.path.insert(0, './scripts')
-from utils import RateLimiter, setup_logger
-from scrapling.fetchers import Fetcher
+from utils import RateLimiter, setup_logger, plain_get
 
 logger = setup_logger("crawler")
 limiter = RateLimiter(delay=1.0)
 results = []
-fetcher = Fetcher()
 
 page_num = 1
 while True:
     limiter.wait()
     url = f"<BASE_URL>?page={page_num}"
-    page = fetcher.get(url)
+    page = plain_get(url)          # 맨 Fetcher().get 이 아니다 — 위 § 96줄 참조
     if page.status != 200:
         break
 
@@ -271,6 +272,10 @@ page = fetcher.fetch(url, network_idle=True, page_action=custom_action)
 ---
 
 ## F: curl_cffi 경량 그리드
+
+> **이 절은 사다리 4단이다 — 통지 이후에 쓴다.** 여기 들어왔다는 것은 사다리 A 를 소진했고
+> 상대가 나를 식별해 거절했다는 뜻이다. 자동으로 넘어오지 않고 사용자에게 한 번 알린 뒤,
+> '진행' 을 고르면 그대로 간다 (`SKILL.md` Step 3 "이음매 통지 게이트").
 
 브라우저를 띄우기 전, TLS 지문 위조 HTTP 요청을 **격자로 완전탐색**해 저비용으로 뚫는다. (insane-search Phase 1 차용) DataDome/PerimeterX/단순 403에 효과적. **Akamai는 제외** — `antibot-strategies.md § WAF capability 라우팅` 참조.
 
@@ -377,7 +382,9 @@ class CollectSpider(Spider):
     concurrent_requests = 5
 
     def configure_sessions(self, manager):
-        manager.add("default", AsyncFetcherSession(impersonate="chrome"))
+        # 비동기 세션에는 plain_session() 래퍼가 없으므로 PLAIN_KWARGS 를 직접 넘긴다.
+        # 두 인자는 반드시 함께 끈다 — 한쪽만 끄면 불일치 지문이 되어 오히려 악화다.
+        manager.add("default", AsyncFetcherSession(impersonate=None, stealthy_headers=False))
 
     async def parse(self, response: Response):
         for item in response.css("<ITEM_SELECTOR>"):

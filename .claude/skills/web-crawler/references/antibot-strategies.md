@@ -1,13 +1,20 @@
 # 안티봇 대응 전략 레퍼런스
 
-> ## ■ 이 문서의 전략은 전부 통지 이후에 쓴다 ■
+> ## ■ 이 문서의 우회 티어는 전부 통지 이후에 쓴다 ■
 >
-> 여기 담긴 것은 **사다리 B(4~6단)** — 상대가 나를 식별하고 거절한 뒤에 쓰는 방법들이다.
-> 사다리 A(정적 HTML · 숨은 API · JS 렌더링)를 소진하기 전에는 이 문서를 열 이유가 없다.
+> **사다리 B(4~6단) 절** — `WAF capability 라우팅` · `curl_cffi 경량 그리드` ·
+> `URL 변형 / referer 트릭` · `Akamai/고급 WAF → Chrome CDP` · `Cloudflare → StealthyFetcher` ·
+> `우회 티어는 통지 후 진행` — 은 상대가 나를 식별하고 거절한 뒤에 쓰는 방법들이다.
+> 사다리 A(정적 HTML · 숨은 API · JS 렌더링)를 소진하기 전에는 그 절들을 열 이유가 없다.
 >
 > **사다리 B 에 진입할 때는 자동으로 넘어가지 않고 사용자에게 한 번 알린다.**
 > '진행' 을 고르면 그대로 간다 — 근거를 묻지도 검증하지도 않는다. 통지는 심사가 아니다.
 > 문구와 발동 조건은 `SKILL.md` Step 3 "이음매 통지 게이트".
+>
+> **나머지 절은 사다리 A 에서도 쓴다** — `소프트블록 탐지`(모든 수집의 사전 게이트) ·
+> `SPA 세션 인터셉트`(3단) · `Jina Reader 폴백`(1단) · `종료 사유 분류`. 이 절들은 그 자체로
+> 이음매를 넘지 않는다. 다만 소프트블록이 잡히면 그 순간이 **이음매에 도달한** 순간이므로,
+> 사다리 B 로 올리기 전에 게이트로 돌아간다.
 >
 > 능력은 전부 여기 그대로 있다. 바뀐 것은 **침묵**이다.
 
@@ -50,7 +57,9 @@ from utils import detect_softblock
 v = detect_softblock(page.html_content, status=page.status,
                      cookies=dict(session.cookies) if hasattr(session, "cookies") else None,
                      selector_hit=bool(page.css("<ITEM_SELECTOR>")))
-# v["blocked"]가 True면 수집 강행 금지 → 아래 capability 라우팅으로 에스컬레이션
+# v["blocked"]가 True면 수집 강행 금지 → **Step 3 의 이음매 통지 게이트로 돌아간다.**
+# 소프트블록 감지는 "상대가 나를 식별하고 거절했다" 는 신호다 — 이음매에 도달했다는 뜻이지
+# 이음매를 건너뛰어도 된다는 뜻이 아니다. 사용자가 '진행' 을 고른 뒤에 capability 라우팅을 적용한다.
 ```
 
 > ⚠️ `_abck` 쿠키 **존재**만으로 Akamai를 판정하던 기존 로직보다, `~-1~` **값**이 더 날카롭다. 통과(`~0~`/`~N~`)면 수집 진행, 미통과(`~-1~`)면 차단으로 본다.
@@ -71,7 +80,7 @@ WAF를 "탐지"만 하지 말고 **"이 WAF를 뚫으려면 무엇이 필요한�
 
 - Akamai Bot Manager는 TLS 지문 + HTTP/2 프레이밍 + 마우스/타이밍 행동 신호를 종합한다. curl_cffi의 TLS 위조만으로는 `_abck` 센서가 `~-1~`에서 안 풀린다.
 - **headless/일반 Playwright(MCP 포함)는 탐지 가능한 stub을 주입**하므로 Akamai에 걸린다. 그래서 **headed real Chrome + CDP**라야 한다.
-- 결론: profile.json `antibot_type=akamai` 또는 `_abck ~-1~` 감지 시 **curl_cffi·Stealthy를 건너뛰고 즉시 Chrome CDP**. 이게 시간 절약의 핵심.
+- 결론: `antibot_type=akamai` 또는 `_abck ~-1~` 이 잡히면 curl_cffi·Stealthy 는 원리적으로 통하지 않는다 — **이음매 통지 게이트를 먼저 거친 뒤**, 사용자가 '진행' 을 고르면 4·5 단을 건너뛰고 6단으로 간다. 이게 시간 절약의 핵심이고, 건너뛰는 것은 4·5 단이지 이음매가 아니다.
 
 ---
 
@@ -312,6 +321,9 @@ with sync_playwright() as p:
 
 ## Cloudflare → StealthyFetcher
 
+> **5단이다 — 통지 이후에 쓴다.** 아래 시그널은 사다리 B 진입 신호이지 바로 실행하라는
+> 신호가 아니다. 한 번 알리고, '진행' 을 고르면 그대로 간다 (`SKILL.md` Step 3).
+
 ### 감지 시그널
 - `cf_clearance` 쿠키
 - Cloudflare 챌린지 페이지 (5초 대기 화면)
@@ -331,7 +343,7 @@ page = fetcher.fetch("<URL>", headless=True, solve_cloudflare=True)
 
 ## Jina Reader 폴백
 
-JS 렌더링이 필요하거나 가볍게 막힌 페이지를 **브라우저 없이** 외부 렌더된 마크다운으로 받는 저비용 폴백. (insane-search 차용) DynamicFetcher/Chrome CDP로 에스컬레이션하기 **직전** 단계, 또는 정찰 시 본문 빠른 확인용.
+JS 렌더링이 필요하거나 가볍게 막힌 페이지를 **브라우저 없이** 외부 렌더된 마크다운으로 받는 저비용 폴백. (insane-search 차용) 사다리 A 안에서 DynamicFetcher(3단)로 올리기 전, 또는 **이음매를 넘기 직전** 단계. 정찰 시 본문 빠른 확인용으로도 쓴다.
 
 ```python
 from utils import plain_get   # Jina 는 사다리 A 쪽이다 — 위장 인자를 붙이지 않는다
@@ -341,7 +353,7 @@ markdown = resp.text
 ```
 
 - **용도**: 정찰·단발 본문 확인. 페이지네이션/대량 구조화 수집엔 부적합(레코드 추출이 아니라 본문 마크다운).
-- **한계**: 강한 WAF(Akamai 등)는 Jina도 못 뚫는다 → Chrome CDP로.
+- **한계**: 강한 WAF(Akamai 등)는 Jina도 못 뚫는다. 여기서 막히면 사다리 A 가 소진된 것이므로 **이음매 통지 게이트로 간다** — Chrome CDP 는 그 뒤다.
 
 ---
 
@@ -353,7 +365,7 @@ markdown = resp.text
 |------|------------|------|
 | **terminal (즉시 종료)** | `auth_required`(로그인 필요), `404`, `paywall`, 명시적 ToS 차단 | 에스컬레이션 중단 → 사용자 보고. 더 시도해도 무의미 |
 | **retryable (계속)** | `429`(rate limit), 네트워크 타임아웃, 일시적 5xx | **종료 아님.** 대기시간 2배(`limiter.backoff()`) 후 재시도. 429는 절대 "차단됨"으로 최종 판정하지 않는다 |
-| **escalate (상위 도구)** | `challenge`/`blocked`(소프트블록) | 그리드 → Stealthy → Dynamic → CDP 순으로 올린다. 전부 소진 후에만 실패 선언 |
+| **escalate (상위 도구)** | `challenge`/`blocked`(소프트블록) | 사다리 A 를 소진했으면 **이음매 통지 게이트**로 돌아간다. '진행' 이후에만 그리드 → Stealthy → CDP 로 올린다. 전부 소진 후에만 실패 선언 |
 
 > **실패 선언 게이트:** ① 에스컬레이션 체인 소진 ② 남은 시도 경로 없음 ③ stop_reason이 terminal. 셋 다 충족 전엔 "이 사이트는 못 뚫는다"고 보고하지 않는다.
 
@@ -409,4 +421,4 @@ def fetch_with_escalation(url: str):
     return None, None
 ```
 
-> Akamai는 이 체인을 건너뛰고 바로 Chrome CDP. curl_cffi/Stealthy로 Akamai를 두드리지 않는다.
+> Akamai는 이 체인을 건너뛰고 통지 후 바로 Chrome CDP. curl_cffi/Stealthy로 Akamai를 두드리지 않는다.

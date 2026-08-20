@@ -63,13 +63,26 @@ python scripts/preflight.py              # 검증: core / agent-browser 분리 P
        └────────────────────────┘
                 │
                 ▼
+       채택한 값이 사다리 B(4단 이상)인가?
+                │
+        ┌───────┴────────┐
+        │ 아니오(1~3단)   │ 예 — consent 기록이 있나?
+        ▼                ├── 있음 → 통지 없이 진행 (sticky)
+   그대로 진행            └── 없음 → **이번이 최초 통과다. 그대로 통지한다**
+        │                          (프로필 재사용은 이음매 면제가 아니다)
+        ▼
        정찰 스킵하고 Step 3 (수집 전략 수립)으로 점프
 ```
+
+> **프로필이 있다는 사실 자체는 게이트를 면제하지 않는다.** 면제하는 것은 `consent` 기록이다.
+> `antibot_strategy` 가 4단 이상인데 `consent` 가 없는 프로필은 "이 사용자는 아직 통지받은 적이
+> 없다" 는 뜻이다 — 그대로 실행하면 통지 없이 사다리 B 를 돌게 되고, 수집이 다 끝난 뒤
+> `save()` 가 `ConsentRequired` 로 막아 있지도 않았던 통지를 기록하도록 떠밀린다.
 
 ### 절대 안 되는 것
 
 - profile.json이 있는데 그걸 무시하고 정찰부터 다시 하기 — 5~20분의 비싼 작업을 매번 반복하는 행위
-- profile.json의 `notes` 필드를 읽지 않고 전략 세우기 — notes에는 LLM이 자동으로 못 알아내는 결정적 메타 정보가 박혀 있다 ("Akamai라 chrome_cdp 필수", "review API는 JSON 아니라 HTML 반환" 등)
+- profile.json의 `notes` 필드를 읽지 않고 전략 세우기 — notes에는 LLM이 자동으로 못 알아내는 결정적 메타 정보가 박혀 있다 ("리스트는 SSR HTML, 상세는 XHR JSON — 2단으로 충분", "review API는 JSON 아니라 HTML 반환" 등)
 - 수집 성공 후 profile.json 저장/갱신을 빠뜨리기 — Step 5-A 필수 게이트. 누락 시 "파이프라인 미완료" 보고
 
 <!-- BEGIN GENERATED: domain-list -->
@@ -139,6 +152,10 @@ python scripts/sync_domain_list.py --check  # 어긋나면 exit 1
 - **robots.txt 제한 발견 시 사용자 확인** — `Disallow: /` 또는 수집 대상 경로 차단 시 진행 여부를 묻는다
 - **PII 감지 (필수)** — 수집 데이터에 전화번호/주민번호/이메일 등이 섞이면 `detect_pii(data)`로 경고하고 사용자에게 보고
 
+> **위 '거절' 규칙과 통지 게이트는 다른 층위다.** 거절은 에이전트가 명백히 위법이라고 판단한
+> **요청 자체를** 받지 않는 것이고, 게이트는 기술적 차단을 만났을 때 **알리고 사용자가 고르는**
+> 것이다. 게이트는 거절하지 않는다 — '진행' 을 뒤집는 근거로 쓰이지 않는다.
+
 ---
 
 ## 핵심 도구
@@ -171,7 +188,9 @@ python scripts/sync_domain_list.py --check  # 어긋나면 exit 1
 
 ```
 Step 0: fingerprints/<sanitized_domain>/profile.json 있나? ──Yes──→
-   │      └→ profile.capability / fetcher_type 그대로 채택 (통지 없음)
+   │      └→ profile.capability / fetcher_type 그대로 채택
+   │         (이미 consent 기록이 있으면 통지 없음 — 기록이 없으면
+   │          이번이 최초 통과이므로 그대로 통지한다)
    No
    │
 Phase 0: 공인 우회로 있나? ──Yes──→ yt-dlp / RSS·Atom / oEmbed / Jina(r.jina.ai)
@@ -197,7 +216,7 @@ Phase 0: 공인 우회로 있나? ──Yes──→ yt-dlp / RSS·Atom / oEmbed
 
 > **에스컬레이션 순서 = 가벼운 것부터.** 자동 체인은 `plain_get → plain_session → DynamicFetcher` 로 **사다리 A 에서 끝난다.** 그 위(`curl_cffi 그리드` · `StealthyFetcher` · `Chrome CDP`)는 능력으로 전부 남아 있되 **통지 이후에** 진입한다. Akamai 는 4·5 단이 원리적으로 안 통해 통지 후 바로 6단이다. 상세 코드는 `references/fetcher-patterns.md § F`, capability 판정 근거는 `references/antibot-strategies.md § WAF capability 라우팅`.
 
-> profile.json이 있는 도메인은 Akamai 탐지 시그널을 따로 안 봐도 `antibot_type` 필드로 즉시 판정된다 (`antibot_type: akamai` → `chrome_cdp` 직행). 이미 `consent` 기록이 있는 프로필이면 통지도 생략된다(sticky).
+> profile.json이 있는 도메인은 Akamai 탐지 시그널을 따로 안 봐도 `antibot_type` 필드로 즉시 판정된다 (`antibot_type: akamai` → `chrome_cdp` 직행). 단 그 직행도 이음매 뒤에 있다 — 이미 `consent` 기록이 있으면 통지 없음, 기록이 없으면 이번이 최초 통과이므로 그대로 통지한다.
 
 ### Akamai 탐지 시그널
 
@@ -223,14 +242,14 @@ chrome.exe --remote-debugging-port=9222 \
 
 | 조건 | 방식 |
 |------|------|
-| ~500건 미만, 단일 리스트 | `FetcherSession` 순차 처리 |
+| ~500건 미만, 단일 리스트 | `plain_session()` 순차 처리 |
 | 500건 이상, 단일 리스트 | `Spider` + 단일 세션 (`concurrent_requests=5`) |
 | 여러 카테고리 동시 수집 | `Spider` + multi-session routing |
 | 장시간 수집 (1000건+) | `Spider` + `crawldir='./crawl_data'` (Ctrl+C 시 자동 체크포인트, 재실행 시 이어서) |
 
 ## Infinite Scroll 처리 (우선순위)
 
-1. **API 직행**: 정찰 시 infinite scroll의 underlying API 엔드포인트 발견 → `FetcherSession`으로 직접 호출 (가장 빠르고 안정적)
+1. **API 직행**: 정찰 시 infinite scroll의 underlying API 엔드포인트 발견 → `plain_session()`으로 직접 호출 (가장 빠르고 안정적). 맨 `FetcherSession()`은 기본값이 `impersonate="chrome"` + `stealthy_headers=True` 라 사다리 2단이 아니다
 2. **DynamicFetcher 스크롤**: API 없으면 `DynamicSession`으로 스크롤 → `network_idle=True` 대기 → 추출 반복
 3. **agent-browser 폴백**: 위 둘 다 실패 시 agent-browser로 수동 스크롤 → DOM 추출 → Scrapling Selector로 파싱
 
