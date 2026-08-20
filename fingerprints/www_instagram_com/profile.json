@@ -1,5 +1,7 @@
 {
   "domain": "www.instagram.com",
+  "distribution": "local",
+  "distribution_reason": "robots.txt 가 자동 수집을 차단한다. 우회 레시피는 아니지만, 사이트가 명시적으로 거부한 대상의 즉시 실행 가능한 수집 레시피를 배포하지 않는다.",
   "fetcher_type": "Playwright",
   "antibot_type": "other",
   "antibot_strategy": "authenticated_browser",
