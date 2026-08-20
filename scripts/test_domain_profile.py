@@ -498,3 +498,33 @@ def test_refused_save_leaves_corrupt_existing_file_intact(tmp_path):
 
     assert (target / "profile.json").read_bytes() == corrupt_bytes
     assert list(target.glob("profile.json.corrupt-*")) == []
+
+
+def test_save_fills_capability_when_absent(tmp_path):
+    """capability 는 SSOT 인데 저장 템플릿을 따라도 비는 경우가 있었다 — save() 가 채운다.
+
+    마이그레이션된 옛 프로필들만 이 필드를 갖고 새 도메인은 영영 못 갖는 상태였다. 그러면
+    읽는 쪽이 fetcher_type 역추론 폴백에만 기대게 되는데, domain_profile.py 의 STICKY_FIELDS
+    주석이 바로 그 폴백에 기대지 말라고 적어 둔 것이다.
+    """
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    mgr.save("example.com", {"domain": "example.com", "fetcher_type": "DynamicFetcher"})
+    assert mgr.load("example.com")["capability"] == "js_render"
+
+
+def test_save_does_not_overwrite_an_explicit_capability(tmp_path):
+    """호출자가 적은 값이 이긴다 — capability 가 SSOT 이고 fetcher_type 이 파생이므로."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    mgr.save("example.com", {
+        "domain": "example.com",
+        "capability": "api",
+        "fetcher_type": "DynamicFetcher",   # 역추론이면 js_render 가 나온다
+    })
+    assert mgr.load("example.com")["capability"] == "api"
+
+
+def test_save_leaves_capability_absent_when_inference_fails(tmp_path):
+    """추론이 안 되면 지어내지 않는다 — 없는 것과 틀린 것 중에서는 없는 쪽이 낫다."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    mgr.save("example.com", {"domain": "example.com"})
+    assert "capability" not in mgr.load("example.com")

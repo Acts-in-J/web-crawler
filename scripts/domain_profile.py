@@ -22,7 +22,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 
-from profile_policy import distribution, is_unrecognized_tool, ladder_rung
+from profile_policy import distribution, infer_capability, is_unrecognized_tool, ladder_rung
 from utils import sanitize_filename, setup_logger
 
 
@@ -47,9 +47,9 @@ ANTIBOT_STRATEGIES = {
 #   consent 가 없는 도메인 — 상속할 기록이 없는 최초 이음매 통과 포함 — 에는 게이트가 그대로
 #   발화한다.)
 # - antibot_strategy: distribution() 이 rung 을 매길 때 보는 판정 필드 중 하나다(다른 하나인
-#   fetcher_type 은 sticky 가 아니다 — 구현체가 바뀌는 건 자연스러우므로). 예: oliveyoung_co_kr
-#   은 fetcher_type 만 보면 사다리 A(FetcherSession) 지만 antibot_strategy: "impersonate" 때문에
-#   local 로 분류된다. 이 필드가 생략만으로 사라지면 미배포 결정이 조용히 public 으로 뒤집히고,
+#   fetcher_type 은 sticky 가 아니다 — 구현체가 바뀌는 건 자연스러우므로). 예: fetcher_type 이
+#   FetcherSession 이어도 antibot_strategy 가 "impersonate" 면 local 이다.
+#   이 필드가 생략만으로 사라지면 미배포 결정이 조용히 public 으로 뒤집히고,
 #   consent 도 (public 프로필에서는 지워야 하므로) 함께 씻겨나간다.
 STICKY_FIELDS = ("distribution", "distribution_reason", "capability", "consent",
                   "antibot_strategy")
@@ -125,6 +125,17 @@ class DomainProfile:
         for field in STICKY_FIELDS:
             if field not in profile and field in existing:
                 profile[field] = existing[field]
+
+        # capability 는 SSOT 인데, 저장 템플릿을 그대로 따르는 호출자도 이 필드를 빠뜨릴 수 있다.
+        # 그러면 읽는 쪽은 fetcher_type 역추론 폴백에만 기대게 되는데, 그 폴백은 있어도 기대면
+        # 안 되는 것이다(위 STICKY_FIELDS 주석 참조 — 라이브러리가 클래스 이름을 바꾸는 순간
+        # 깨진다). 저장 시점에 한 번 확정해 두면 새 도메인도 마이그레이션된 프로필과 같은 모양이
+        # 된다. 호출자가 명시한 값은 건드리지 않고, 추론이 실패하면(모르는 fetcher_type) 지어내지
+        # 않고 그대로 비워 둔다 — 없는 것과 틀린 것 중에서는 없는 쪽이 낫다.
+        if not profile.get("capability"):
+            inferred = infer_capability(profile)
+            if inferred:
+                profile["capability"] = inferred
 
         # 게이트는 배포 판정(distribution)이 아니라 이음매를 실제로 넘었는지(ladder_rung >= 4)
         # 로만 발화한다. distribution()=="local" 은 더 넓은 집합이다 — robots/ToS 사유의 명시적

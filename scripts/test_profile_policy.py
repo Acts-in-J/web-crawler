@@ -294,7 +294,7 @@ def test_credential_blocks_come_after_whitelist():
     """last-match-wins — 자격증명 재차단이 whitelist 뒤에 있어야 한다."""
     lines = [l.strip() for l in GITIGNORE.read_text(encoding="utf-8").splitlines()]
     assert lines.index("**/cookies*.json") > lines.index(END)
-    assert lines.index("**/auth*.json") > lines.index(END)
+    assert lines.index("**/*auth*.json") > lines.index(END)
     assert lines.index("**/*token*.json") > lines.index(END)
     assert lines.index("**/*secret*") > lines.index(END)
 

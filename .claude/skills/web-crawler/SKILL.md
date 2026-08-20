@@ -63,6 +63,7 @@ if profile_mgr.exists(domain):
 ```python
 profile_mgr.save(domain, {
     "domain": domain,
+    "capability": "<static|js_render|api|session>",   # ★ SSOT — 능력 수준. 비워 두면 save() 가 fetcher_type 에서 채운다
     "fetcher_type": "<Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION|yt-dlp|RSS|oEmbed|Jina>",
     "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot>",
     "site_type": "<static|csr|api|spa_session|akamai>",
@@ -469,6 +470,7 @@ from datetime import date
 profile_mgr = DomainProfile()  # base_dir=./fingerprints
 profile_mgr.save(domain, {
     "domain": domain,
+    "capability": "<static|js_render|api|session>",   # ★ SSOT — 능력 수준. 비워 두면 save() 가 fetcher_type 에서 채운다
     "fetcher_type": "<yt-dlp|RSS|oEmbed|Jina|Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체. 앞 4개는 Step 1-B Phase 0 공인 우회로
     "antibot_type": "<none|cloudflare|akamai|naver_antibot|other>",
     "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
@@ -476,7 +478,7 @@ profile_mgr.save(domain, {
     "selectors": {<필드: 셀렉터>},
     "pagination": {<config — type/param/limit 등>},
     "api_endpoints": [{<url, method, params, field_mapping>}],
-    "notes": "<재수집 시 결정적인 한두 줄: 인증 필요 여부, 페이지네이션 트릭, 봇 차단 회피 포인트>",
+    "notes": "<다음 사람이 정찰 없이 바로 수집할 수 있는 결정적 한두 줄>",
     "last_used": str(date.today()),
     # 사다리 B(4단 이상)로 수집했을 때만. **실제로 통지했고 사용자가 '진행' 을 고른 경우에만 적는다** —
     # 그 일이 없었으면 이 블록을 적지 않는다. 적으면 기록이 거짓이 되고, 이 기록의 유일한 쓸모가 사라진다.
@@ -488,7 +490,7 @@ profile_mgr.save(domain, {
 ### 게이트 규칙
 
 1. **`notes` 필드는 비워두지 않는다.** 다음 사람(미래의 나 포함)이 정찰 안 하고도 바로 수집할 수 있는 한두 줄의 결정적 정보를 적는다 — "API key는 OK, job_group_id=518이 일반 목록", "리스트는 SSR HTML, 상세는 XHR JSON — 2단으로 충분", "review API는 POST에 originProductNo 필요" 같은 형식.
-2. **인증 토큰/쿠키/내부 API key는 profile.json에 박지 않는다.** `.gitignore`가 `cookies*.json`/`auth*.json`/`*token*.json`/`*secret*`은 차단하지만 profile.json은 commit 대상이므로 평문 자격증명이 새지 않게 분리한다.
+2. **인증 토큰/쿠키/내부 API key는 profile.json에 박지 않는다.** `.gitignore`가 `cookies*.json`/`*auth*.json`/`*token*.json`/`*secret*`은 차단하지만 profile.json은 commit 대상이므로 평문 자격증명이 새지 않게 분리한다.
 3. **fetcher_type / antibot_strategy 둘은 무조건 채운다.** 다음 실행에서 Step 1-A가 이 두 값만 보고 fetcher chain을 건너뛰므로, 빈 값이면 게이트 기능을 못 한다.
 4. **사다리 B 로 수집했으면 `antibot_strategy` 에 그 사실을 적는다.** `none` 으로 적으면 분류기가 탐색 단계로 오판해 그 레시피를 배포 대상에 넣고 `consent` 기록도 지운다. 실제로 쓴 것을 적을 것.
    **`Spider` 는 티어가 아니라 래퍼다** — 밑에서 실제로 쓴 티어를 적는다.

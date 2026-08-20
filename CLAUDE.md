@@ -108,6 +108,7 @@ if profile_mgr.exists(domain):
 # Step 5-A: 수집 성공 후 저장 (필수 게이트)
 profile_mgr.save(domain, {
     "domain": domain,
+    "capability": "<static|js_render|api|session>",   # ★ SSOT — 능력 수준. 비워 두면 save() 가 fetcher_type 에서 채운다
     "fetcher_type": "<yt-dlp|RSS|oEmbed|Jina|Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체. 앞 4개는 Phase 0 공인 우회로
     "antibot_type": "<none|cloudflare|akamai|naver_antibot|other>",
     "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
@@ -148,7 +149,7 @@ python scripts/sync_domain_list.py --check  # 어긋나면 exit 1
 - **자동 접근 차단을 만나면 통지 후 사용자 선택** — CAPTCHA·WAF·봇 탐지는 법적으로 같은 보호조치다. 어느 쪽이든 **자동으로 넘어가지 않고 한 번 알리고 사용자가 고른다**. '진행' 이면 그대로 간다 — 근거를 묻지도 검증하지도 않는다. 상세는 SKILL.md Step 3 "이음매 통지 게이트"
 - **CAPTCHA 자동 풀이 금지** — 통지와 별개다. reCAPTCHA/hCaptcha 를 프로그램으로 푸는 것은 하지 않는다. 사용자가 agent-browser 로 직접 푸는 것은 가능
 - **로그인 자격증명 자동 저장 금지** — ID/PW를 코드/메모리/파일에 저장하지 않는다. 사용자가 직접 브라우저에서 로그인 → 쿠키만 추출
-- **불법적 스크래핑 거절** — 저작권 위반, 개인정보 대량 수집, ToS 명시적 위반은 진행 전 사용자 확인 후 거절
+- **명백히 위법한 요청은 거절** — 저작권 침해 목적의 본문 복제, 개인정보 대량 수집, 명시적으로 금지된 재배포 등. **약관이 크롤링을 금지한다는 사실만으로는 여기 해당하지 않는다** — 그건 접근의 계약 층이고, 거절이 아니라 통지 게이트로 간다
 - **robots.txt 제한 발견 시 사용자 확인** — `Disallow: /` 또는 수집 대상 경로 차단 시 진행 여부를 묻는다
 - **PII 감지 (필수)** — 수집 데이터에 전화번호/주민번호/이메일 등이 섞이면 `detect_pii(data)`로 경고하고 사용자에게 보고
 
@@ -353,8 +354,8 @@ output/                                  # gitignore — 수집 결과물
 fingerprints/                            # gitignore + whitelist 정책
 ├── elements_storage.db                  # gitignore — Scrapling 셀렉터 자가 치유 DB (전역 공유)
 └── <sanitized_domain>/                  # 예: books_toscrape_com, www_kurly_com
-    ├── profile.json                     # ★ tracked — 도메인 수집 레시피 (절대 규칙 0의 source)
-    └── recipe.md                        # tracked (선택) — 추가 노트
+    ├── profile.json                     # 배포 판정 통과분만 tracked — 도메인 수집 레시피 (절대 규칙 0의 source)
+    └── recipe.md                        # 배포 판정 통과분만 tracked (선택) — 추가 노트
 ```
 
 ### 규칙
@@ -366,7 +367,7 @@ fingerprints/                            # gitignore + whitelist 정책
 
 ### .gitignore whitelist 정책
 
-`fingerprints/**`로 전부 차단한 뒤 `!fingerprints/*/profile.json` + `!fingerprints/*/recipe.md`만 whitelist. 그 다음 줄에서 `**/cookies*.json`, `**/auth*.json`, `**/*token*.json`, `**/*secret*` 패턴을 **whitelist 다음에 배치** (last-match-wins로 자격증명 재차단).
+`fingerprints/**`로 전부 차단한 뒤(default-deny), **배포 판정을 통과한 프로필만** 도메인별 경로로 명시 whitelist 한다 — 이 목록은 `scripts/profile_policy.py` 의 판정 결과로 `scripts/sync_domain_list.py` 가 생성하므로 손으로 고치지 않는다. `!fingerprints/*/profile.json` 같은 와일드카드 한 줄은 정책 전체를 무력화하므로 쓰지 않는다(`scripts/test_profile_policy.py` 가 막는다). 그 다음 줄에서 `**/cookies*.json`, `**/*auth*.json`, `**/*token*.json`, `**/*secret*` 패턴을 **whitelist 다음에 배치** (last-match-wins로 자격증명 재차단).
 
 - profile.json에 토큰/API key/JWT/세션 쿠키 박지 말 것 — commit되면 GitHub에 평문 노출됨
 - 새 도메인 프로필 commit 전 `git diff --cached fingerprints/` 로 자격증명 누출 확인

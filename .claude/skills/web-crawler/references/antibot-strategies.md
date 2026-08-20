@@ -115,7 +115,7 @@ safari_ios (모바일)
 | 모바일 서브도메인 | `www.x.com` → `m.x.com` / `am-x.com` | 모바일 엔드포인트는 WAF가 약하게 걸린 경우 흔함 |
 | www 제거 | `www.x.com` → `x.com` | 리다이렉트 체인/엣지 룰 차이 |
 | self-root referer | `Referer: https://x.com/` | 내부 네비게이션처럼 보임 |
-| 검색엔진 referer | `Referer: https://www.google.com/` | 크롤러/SEO 트래픽으로 허용되는 경로 ⚠️ ToS 경계 주의 — 명백한 우회 회피용으론 쓰지 않는다 |
+| 검색엔진 referer | `Referer: https://www.google.com/` | 크롤러/SEO 트래픽으로 허용되는 경로 ⚠️ ToS 경계 주의 — 사다리 B 티어이므로 통지 게이트를 거친 뒤에 쓴다 |
 
 ---
 

@@ -13,13 +13,17 @@ CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 ANTIBOT = REPO_ROOT / ".claude/skills/web-crawler/references/antibot-strategies.md"
 README = REPO_ROOT / "README.md"
 ACCEPTABLE_USE = REPO_ROOT / "ACCEPTABLE_USE.md"
+AGENTS_MD = REPO_ROOT / "AGENTS.md"
 
-GATE_DOCS = [SKILL, CLAUDE_MD, ANTIBOT]
+# AGENTS.md 는 Codex 가 실제로 실행하는 계약 문서인데 한동안 어느 드리프트 테스트에도 없었다.
+# 그 결과 브랜치 내내 네 번의 문서 정리를 전부 비껴가, 이미 고쳐진 규칙의 옛 판본이 여기서만
+# 살아남았다(자동 우회 금지 문구, ToS 위반 = 거절). 지시 문서는 전부 같은 검사를 받는다.
+GATE_DOCS = [SKILL, CLAUDE_MD, ANTIBOT, AGENTS_MD]
 
 
 @pytest.mark.parametrize("path", GATE_DOCS, ids=lambda p: p.name)
 def test_notice_gate_present(path):
-    """이음매 통지가 세 지시 문서에 전부 살아 있어야 한다."""
+    """이음매 통지가 네 지시 문서에 전부 살아 있어야 한다."""
     text = path.read_text(encoding="utf-8")
     assert "통지" in text, f"{path.name} 에서 통지 게이트 서술이 사라졌습니다"
 
@@ -37,7 +41,11 @@ def test_skill_does_not_demand_justification():
 
 @pytest.mark.parametrize("path", GATE_DOCS + [README, ACCEPTABLE_USE], ids=lambda p: p.name)
 def test_docs_do_not_overclaim_a_ban(path):
-    """문서가 실제 동작보다 강하게 말하면 안 된다 — 통지지 금지가 아니다."""
+    """문서가 실제 동작보다 강하게 말하면 안 된다 — 통지지 금지가 아니다.
+
+    GATE_DOCS 를 통해 AGENTS.md 도 여기에 들어온다 — 실제로 이 검사가 AGENTS.md 에 남아 있던
+    'CAPTCHA 자동 우회 금지' 를 잡았다.
+    """
     text = path.read_text(encoding="utf-8")
     for phrase in ("우회하지 않는다", "우회 금지", "우회를 하지 않습니다"):
         assert phrase not in text, (
@@ -123,6 +131,32 @@ def test_fetcher_decision_tree_notice_is_conditional_on_consent():
         "Fetcher 선택 의사결정 트리의 Step 0 분기가 consent 기록 유무를 조건으로 걸지 않습니다"
     )
     assert "이번이 최초 통과" in section
+
+
+def _antibot_banner_section() -> str:
+    """antibot-strategies.md 최상단 배너만 잘라 반환 (목차 직전까지)."""
+    return _section(
+        ANTIBOT,
+        "> ## ■ 이 문서의 우회 티어는 전부 통지 이후에 쓴다 ■",
+        "## 목차",
+    )
+
+
+def test_antibot_banner_states_the_notice_rule():
+    """antibot-strategies.md — 400줄짜리 문서에 '통지' 라는 단어가 있다는 것만으로는 부족하다.
+
+    이 문서의 절 대부분이 사다리 B 티어라, 게이트 서술이 실제로 걸려 있어야 하는 곳은 문서
+    맨 위 배너 하나다. 그 배너가 지워져도 아래 절들 어딘가에 '통지' 라는 단어는 남아 있어
+    문서 전체 검사는 그린을 유지한다 — 다른 지시 문서들이 절 단위 앵커를 받은 것과 같은
+    이유로 여기도 배너 절만 잘라서 본다.
+    """
+    banner = _antibot_banner_section()
+    assert "사다리 B 에 진입할 때는 자동으로 넘어가지 않고 사용자에게 한 번 알린다" in banner, (
+        "antibot-strategies.md 상단 배너에서 사다리 B 진입 통지 규칙이 사라졌습니다"
+    )
+    assert "근거를 묻지도 검증하지도 않는다" in banner, (
+        "배너가 통지를 심사로 만들고 있습니다 — 통지는 근거를 묻지 않습니다"
+    )
 
 
 def _recon_rules_section() -> str:
