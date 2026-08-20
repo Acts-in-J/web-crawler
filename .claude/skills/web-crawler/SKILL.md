@@ -55,6 +55,7 @@ if profile_mgr.exists(domain):
     profile = profile_mgr.load(domain)
     # "이전 설정을 재사용할까요?"
     #   → Yes(재사용): Phase 0(1-B) 건너뛰고 바로 Step 3 (검증된 레시피 보유)
+    #     단 consent 기록이 없는 사다리 B 프로필이면 이번이 최초 통과다 — Step 3 의 이음매 통지를 거친다.
     #   → No(신규·미재사용)·프로필 없음: Step 1-B(Phase 0)부터 진행
 ```
 
@@ -62,7 +63,8 @@ if profile_mgr.exists(domain):
 ```python
 profile_mgr.save(domain, {
     "domain": domain,
-    "fetcher_type": "<SELECTED_FETCHER>",
+    "fetcher_type": "<Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION|yt-dlp|RSS|oEmbed|Jina>",
+    "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot>",
     "site_type": "<static|csr|api|spa_session|akamai>",
     "selectors": {<MAPPING>},
     "pagination": {<CONFIG>},
@@ -87,13 +89,33 @@ profile_mgr.save(domain, {
 | Reddit | 서브레딧/스레드 `.rss` (Atom) | |
 | Hacker News | Firebase JSON API | |
 | 네이버 검색·금융 | 비공식 JSON 엔드포인트 | 도메인 프로필 참조 |
-| 일반 사이트 (가볍게 막힘/SPA 렌더) | `https://r.jina.ai/<URL>` | 정찰·단발 본문용, 대량 수집엔 부적합 |
+| 일반 사이트 (SPA 렌더·단발 본문 추출) | `https://r.jina.ai/<URL>` | 정찰·단발 본문용, 대량 수집엔 부적합 |
 
 **판정:** Phase 0로 데이터가 충분히 나오면 → 정찰 스킵, Step 3 분류 트리도 건너뛰고 수집(Step 4)으로. 안 되면 → Step 2 정찰로 정상 진행.
 
 ---
 
 ## Step 2: 정찰 (agent-browser)
+
+### Step 2-0: robots.txt 확인 (필수 · 정찰 전)
+
+정찰 요청을 보내기 **전에** 한 번 확인한다. 산문 지시가 아니라 실제 호출이다:
+
+```python
+from utils import check_robots
+
+verdict = check_robots(target_url)
+if not verdict["allowed"]:
+    # 진행 여부를 사용자에게 묻는다 — 임의로 진행하지 않는다
+    ...
+if verdict["crawl_delay"]:
+    limiter = RateLimiter(delay=max(verdict["crawl_delay"], 1.0))
+```
+
+- **차단이면 사용자 확인 없이 진행하지 않는다.**
+- `crawl_delay` 가 있으면 RateLimiter 기본값보다 우선한다.
+- `error` 가 있으면 "허용됨" 이 아니라 "확인 못 함" 이다 — 사용자에게 그대로 알린다.
+- robots.txt 는 법적 구속력이 없지만 표지판이다. 무시했다는 사실은 "알고도 했다" 의 정황이 된다.
 
 > **agent-browser는 이 프로젝트의 표준 정찰 도구다 (선택 아님).** 단순 정적 사이트를 긁더라도 정찰 단계에서는 agent-browser를 먼저 사용한다.
 >
@@ -436,10 +458,11 @@ profile_mgr.save(domain, {
 
 ### 게이트 규칙
 
-1. **`notes` 필드는 비워두지 않는다.** 다음 사람(미래의 나 포함)이 정찰 안 하고도 바로 수집할 수 있는 한두 줄의 결정적 정보를 적는다 — "API key는 OK, job_group_id=518이 일반 목록", "Akamai 보호라 Chrome CDP 필수", "review API는 POST에 originProductNo 필요" 같은 형식.
+1. **`notes` 필드는 비워두지 않는다.** 다음 사람(미래의 나 포함)이 정찰 안 하고도 바로 수집할 수 있는 한두 줄의 결정적 정보를 적는다 — "API key는 OK, job_group_id=518이 일반 목록", "리스트는 SSR HTML, 상세는 XHR JSON — 2단으로 충분", "review API는 POST에 originProductNo 필요" 같은 형식.
 2. **인증 토큰/쿠키/내부 API key는 profile.json에 박지 않는다.** `.gitignore`가 `cookies*.json`/`auth*.json`/`*token*.json`/`*secret*`은 차단하지만 profile.json은 commit 대상이므로 평문 자격증명이 새지 않게 분리한다.
 3. **fetcher_type / antibot_strategy 둘은 무조건 채운다.** 다음 실행에서 Step 1-A가 이 두 값만 보고 fetcher chain을 건너뛰므로, 빈 값이면 게이트 기능을 못 한다.
 4. **사다리 B 로 수집했으면 `antibot_strategy` 에 그 사실을 적는다.** `none` 으로 적으면 분류기가 탐색 단계로 오판해 그 레시피를 배포 대상에 넣고 `consent` 기록도 지운다. 실제로 쓴 것을 적을 것.
+   **`Spider` 는 티어가 아니라 래퍼다** — 밑에서 실제로 쓴 티어를 적는다.
 5. 사다리 B 프로필은 `consent` 없이는 저장이 거부된다(`ConsentRequired`). 심사가 아니라 기록이다. 인식되지 않는 `fetcher_type`/`antibot_strategy` 값도 같은 예외로 저장을 막는다 — 이때는 통지를 기록할 게 아니라 값을 문서화된 것으로 고쳐야 한다.
 6. **이미 profile이 있으면 `last_used`만 갱신하지 말고**, 이번 수집에서 새로 알아낸 게 있으면 `notes`와 endpoint/selector를 누적/수정한다.
 

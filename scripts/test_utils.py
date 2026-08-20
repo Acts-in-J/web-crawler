@@ -203,3 +203,54 @@ def test_plain_get_rejects_partial_override():
 def test_plain_session_rejects_partial_override():
     with pytest.raises(ValueError, match="stealthy_headers"):
         plain_session(impersonate="chrome")
+
+
+# ── P2-1: robots.txt ──
+from utils import check_robots
+
+
+def _fake_fetch(body, status=200):
+    def _fetch(url, timeout=10):
+        return body, status
+    return _fetch
+
+
+def test_robots_allows_when_not_disallowed(monkeypatch):
+    monkeypatch.setattr("utils._fetch_robots", _fake_fetch("User-agent: *\nAllow: /"))
+    result = check_robots("https://example.com/list")
+    assert result["allowed"] is True
+    assert result["robots_url"] == "https://example.com/robots.txt"
+
+
+def test_robots_blocks_disallowed_path(monkeypatch):
+    monkeypatch.setattr("utils._fetch_robots",
+                        _fake_fetch("User-agent: *\nDisallow: /private"))
+    assert check_robots("https://example.com/private/x")["allowed"] is False
+    assert check_robots("https://example.com/public/x")["allowed"] is True
+
+
+def test_robots_blocks_everything(monkeypatch):
+    monkeypatch.setattr("utils._fetch_robots", _fake_fetch("User-agent: *\nDisallow: /"))
+    assert check_robots("https://example.com/anything")["allowed"] is False
+
+
+def test_robots_reports_crawl_delay(monkeypatch):
+    monkeypatch.setattr("utils._fetch_robots",
+                        _fake_fetch("User-agent: *\nCrawl-delay: 5"))
+    assert check_robots("https://example.com/")["crawl_delay"] == 5.0
+
+
+def test_robots_missing_file_allows(monkeypatch):
+    """robots.txt 가 404 면 제한이 없는 것으로 본다 (표준 동작)."""
+    monkeypatch.setattr("utils._fetch_robots", _fake_fetch("", 404))
+    assert check_robots("https://example.com/")["allowed"] is True
+
+
+def test_robots_network_error_is_reported_not_swallowed(monkeypatch):
+    """가져오지 못한 것과 허용된 것은 다르다 — 사용자가 구분할 수 있어야 한다."""
+    def _boom(url, timeout=10):
+        raise OSError("connection refused")
+    monkeypatch.setattr("utils._fetch_robots", _boom)
+    result = check_robots("https://example.com/")
+    assert result["error"] is not None
+    assert result["allowed"] is True     # 차단 근거가 없으므로 막지는 않는다

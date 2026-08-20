@@ -6,7 +6,7 @@ SKILL.md Step 3에서 결정된 전략에 맞는 패턴을 선택하여 사용�
 ## 목차
 
 1. [공통 필수 패턴](#공통-필수-패턴) — 모든 수집 코드에 적용
-2. [A: API 직접 수집 (FetcherSession)](#a-api-직접-수집)
+2. [A: API 직접 수집 (plain_session)](#a-api-직접-수집)
 3. [B-1: 정적 HTML 수집 (Fetcher)](#b-1-정적-html-수집)
 4. [B-2: 동적/JS 사이트 수집 (DynamicFetcher)](#b-2-동적js-사이트-수집)
 5. [F: curl_cffi 경량 그리드 (브라우저 전 돌파)](#f-curl_cffi-경량-그리드)

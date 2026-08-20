@@ -31,3 +31,16 @@ def test_scrapling_has_upper_bound():
     assert "<0.5" in _declared()["scrapling"], (
         "scrapling 에 상한(<0.5)이 없습니다 — 0.5 가 나오면 생성 스크립트가 일괄로 깨집니다"
     )
+
+
+def test_protego_comment_is_true():
+    """requirements.txt 의 주석이 실제 코드와 일치하는지.
+
+    G3 의 재발 방지 — protego 는 '런타임에서 사용' 이라고 적혀 있으면서 실제로는
+    어디서도 import 되지 않은 채 오래 방치됐다. 주석이 이름을 대면 그 이름은 존재해야 한다.
+    """
+    import utils
+    assert hasattr(utils, "check_robots"), (
+        "requirements.txt 의 protego 주석이 scripts/utils.py check_robots() 를 가리키는데 "
+        "그 함수가 없습니다 — 주석이 사실과 다릅니다"
+    )

@@ -212,3 +212,47 @@ def plain_session(**kw):
     kw = _apply_plain_kwargs(kw)
     from scrapling.fetchers import FetcherSession  # lazy
     return FetcherSession(**kw)
+
+
+# ── robots.txt — 표지판이지 잠금장치가 아니지만, 무시했다는 사실은 정황이 된다 ──
+def _fetch_robots(url: str, timeout: int = 10):
+    """robots.txt 를 가져와 (본문, status) 반환. 테스트에서 monkeypatch 한다."""
+    from urllib.request import Request, urlopen
+    req = Request(url, headers={"User-Agent": "web-crawler-agent"})
+    with urlopen(req, timeout=timeout) as resp:      # noqa: S310 (http/https만 들어온다)
+        return resp.read().decode("utf-8", errors="replace"), resp.status
+
+
+def check_robots(url: str, user_agent: str = "*") -> dict:
+    """robots.txt 를 실제로 읽어 이 URL 수집이 허용되는지 판정.
+
+    반환: {"allowed": bool, "crawl_delay": float|None, "robots_url": str, "error": str|None}
+
+    robots.txt 는 법적 구속력이 없지만, 무시했다는 사실은 "알고도 했다" 의 정황이 된다.
+    가져오지 못한 것(error)과 허용된 것(allowed)은 다르다 — 호출자가 구분할 수 있게 둘 다 준다.
+    """
+    from protego import Protego
+
+    parsed = urlparse(url)
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    result = {"allowed": True, "crawl_delay": None, "robots_url": robots_url, "error": None}
+
+    try:
+        body, status = _fetch_robots(robots_url)
+    except Exception as exc:
+        result["error"] = f"robots.txt 를 가져오지 못했습니다: {exc}"
+        return result
+
+    if status == 404 or not body.strip():
+        return result       # 제한 없음
+
+    try:
+        parser = Protego.parse(body)
+    except Exception as exc:
+        result["error"] = f"robots.txt 파싱 실패: {exc}"
+        return result
+
+    result["allowed"] = parser.can_fetch(url, user_agent)
+    delay = parser.crawl_delay(user_agent)
+    result["crawl_delay"] = float(delay) if delay is not None else None
+    return result
