@@ -42,6 +42,7 @@ LADDER_B_TOOLS = {
     "curlcffi": 4,
     "curlcffigrid": 4,
     "grid": 4,
+    "impersonate": 4,        # curl_cffi TLS 지문 정렬 — 사이트가 평문 호출을 거절했을 때의 대응
     "stealthy": 5,
     "stealthyfetcher": 5,
     "cdp": 6,

@@ -103,10 +103,15 @@ def test_empty_profile_is_local():
 
 
 # ── 실제 프로필에 대한 회귀 ──
-def test_detection_without_bypass_stays_public():
-    """oliveyoung: cloudflare 가 감지됐으나 평범한 API 호출로 끝냈다. 우회한 게 아니다."""
-    profiles = load_all()
-    assert is_distributable(profiles["oliveyoung_co_kr"])
+def test_detection_without_response_stays_public():
+    """감지 사실과 우회 여부는 다르다 — 무언가 탐지됐어도 평범한 방법으로 끝냈으면 배포한다."""
+    assert distribution({"fetcher_type": "FetcherSession", "antibot_strategy": "none"}) == "public"
+
+
+def test_impersonation_is_a_ladder_b_response():
+    """사이트가 평문을 거절해서 지문을 맞춘 것은 탐색이 아니라 돌파다."""
+    assert ladder_rung({"fetcher_type": "FetcherSession", "antibot_strategy": "impersonate"}) == 4
+    assert distribution({"fetcher_type": "FetcherSession", "antibot_strategy": "impersonate"}) == "local"
 
 
 def test_session_intercept_stays_public():
@@ -116,7 +121,8 @@ def test_session_intercept_stays_public():
 
 
 @pytest.mark.parametrize("name", ["coupang_com", "fin_land_naver_com",
-                                  "brand_naver_com", "smartstore_naver_com"])
+                                  "brand_naver_com", "smartstore_naver_com",
+                                  "oliveyoung_co_kr"])
 def test_ladder_b_profiles_are_not_distributable(name):
     profiles = load_all()
     assert not is_distributable(profiles[name])
@@ -132,7 +138,6 @@ def test_expected_public_count():
         "g2b_go_kr",
         "guesskorea_com",
         "made-in-china_com",
-        "oliveyoung_co_kr",
         "wanted_co_kr",
         "www_11st_co_kr",
         "www_fss_or_kr",
