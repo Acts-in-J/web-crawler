@@ -95,17 +95,23 @@ if profile_mgr.exists(domain):
 # Step 5-A: 수집 성공 후 저장 (필수 게이트)
 profile_mgr.save(domain, {
     "domain": domain,
-    "fetcher_type": "...",
-    "antibot_type": "...",
-    "antibot_strategy": "...",
-    "site_type": "...",
+    "fetcher_type": "<yt-dlp|RSS|oEmbed|Jina|Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체. 앞 4개는 Phase 0 공인 우회로
+    "antibot_type": "<none|cloudflare|akamai|naver_antibot|other>",
+    "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
+    "site_type": "<static|csr|api|spa_session|akamai>",
     "selectors": {...},
     "pagination": {...},
     "api_endpoints": [...],
     "notes": "<다음 사람이 정찰 없이 바로 수집할 수 있는 결정적 한두 줄>",
+    # 사다리 B(4단 이상)로 수집했을 때만. **실제로 통지했고 사용자가 '진행' 을 고른 경우에만 적는다** —
+    # 그 일이 없었으면 이 블록을 적지 않는다. 근거가 아니라 선택을 적는다.
+    # 이미 consent 기록이 있는 프로필이면 자동으로 이어지므로(sticky) 생략해도 된다.
+    "consent": {"notified_at": "<통지한 실제 시각 ISO8601>", "choice": "proceed"},
     "last_used": "YYYY-MM-DD",
 })
 ```
+
+> `fetcher_type`/`antibot_strategy` 는 위 목록 안의 값으로 적는다. 문서에 없는 값을 지어내면 분류기가 사다리 칸을 판별하지 못해 저장이 거부되고, 사다리 B 로 수집해 놓고 A 쪽 값을 적으면 그 레시피가 배포 대상으로 잘못 분류된다.
 
 새 도메인 프로필을 처음 만들었다면 저장 직후 목록을 재생성한다 (위 "알려진 도메인" 블록은 생성물):
 
@@ -116,6 +122,9 @@ python scripts/sync_domain_list.py --check  # 어긋나면 exit 1
 
 > ⚠️ profile.json은 git commit 대상이다. 토큰/쿠키/API key는 절대 박지 말고 `cookies.json`/`auth.json` 같은 별도 파일(.gitignore 차단됨)에 분리.
 
+> 사다리 B 프로필은 `consent` 없이는 저장이 거부된다(`ConsentRequired`). 이건 심사가 아니라
+> 기록이다 — 권한 근거를 적을 필요는 없고, 통지를 받고 진행을 골랐다는 사실만 남긴다.
+
 ---
 
 ## 범위 / 운영 안전 규칙
@@ -123,7 +132,8 @@ python scripts/sync_domain_list.py --check  # 어긋나면 exit 1
 **포함**: 사이트 정찰, 구조 파악, 로그인 대응, 동적 콘텐츠, pagination, 대량 데이터 수집, 엑셀 출력.
 
 **제외 (절대 안 함)**:
-- **CAPTCHA 자동 우회 시도 금지** — reCAPTCHA/hCaptcha 등이 뜨면 사용자에게 보고 후 중단. agent-browser로 수동 풀이를 요청할 수는 있음
+- **자동 접근 차단을 만나면 통지 후 사용자 선택** — CAPTCHA·WAF·봇 탐지는 법적으로 같은 보호조치다. 어느 쪽이든 **자동으로 넘어가지 않고 한 번 알리고 사용자가 고른다**. '진행' 이면 그대로 간다 — 근거를 묻지도 검증하지도 않는다. 상세는 SKILL.md Step 3 "이음매 통지 게이트"
+- **CAPTCHA 자동 풀이 금지** — 통지와 별개다. reCAPTCHA/hCaptcha 를 프로그램으로 푸는 것은 하지 않는다. 사용자가 agent-browser 로 직접 푸는 것은 가능
 - **로그인 자격증명 자동 저장 금지** — ID/PW를 코드/메모리/파일에 저장하지 않는다. 사용자가 직접 브라우저에서 로그인 → 쿠키만 추출
 - **불법적 스크래핑 거절** — 저작권 위반, 개인정보 대량 수집, ToS 명시적 위반은 진행 전 사용자 확인 후 거절
 - **robots.txt 제한 발견 시 사용자 확인** — `Disallow: /` 또는 수집 대상 경로 차단 시 진행 여부를 묻는다
@@ -149,7 +159,7 @@ python scripts/sync_domain_list.py --check  # 어긋나면 exit 1
 | 〃 — agent-browser 불가 시 | Claude in Chrome(Claude) / ChatGPT Chrome Browser Use(Codex, 연결 시) → DynamicFetcher/Playwright | host별 폴백 티어. 어느 티어를 썼는지 profile `notes`에 기록 |
 | 수동 로그인 + 쿠키/JWT 추출 | agent-browser | 사용자 상호작용 필요 |
 | 대량 데이터 수집 | Scrapling | 빠름, Fetcher 계층, 자가 치유 |
-| Akamai/Naver antibot 수집 | Chrome CDP (`scripts/chrome_cdp.py`) | StealthyFetcher로 못 뚫림 |
+| 고급 WAF(Akamai 계열) 대응 — **통지 이후** | Chrome CDP (`scripts/chrome_cdp.py`) | 4·5단이 원리적으로 안 통함 |
 | 진행상황 체크포인트 | `scripts/progress.py` | 장시간 수집 시 pause/resume 지원 |
 | 엑셀 출력 | openpyxl (`scripts/export_excel.py`) | 공통 모듈 |
 
@@ -161,45 +171,37 @@ python scripts/sync_domain_list.py --check  # 어긋나면 exit 1
 
 ```
 Step 0: fingerprints/<sanitized_domain>/profile.json 있나? ──Yes──→
-   │      └→ profile.fetcher_type / antibot_strategy 그대로 채택
-   │         (재정찰 없이 Step 3로 점프, 단 last_used 3개월+이면 보강 정찰)
+   │      └→ profile.capability / fetcher_type 그대로 채택 (통지 없음)
    No
    │
 Phase 0: 공인 우회로 있나? ──Yes──→ yt-dlp / RSS·Atom / oEmbed / Jina(r.jina.ai)
-   │  (profile 조회 직후, 정찰 전 — SKILL.md Step 1-B)   └→ 정찰 스킵, 바로 수집
    No
    │
-API 발견? ──Yes──→ FetcherSession (가장 빠르고 안정적)
+┌─ 사다리 A — 자동 · 통지 없음 ────────────────────────────┐
+│  API 발견?        ──Yes──→ 2단 plain_session             │
+│  정적 HTML?       ──Yes──→ 1단 plain_get                 │
+│  JS 렌더링 필요?  ──Yes──→ 3단 DynamicFetcher            │
+└──────────────────────────────────────────────────────────┘
    │
-   No
-   │
-안티봇 보호? ──Yes──→ 어떤 유형?
-   │                    │
-   │                    ├─ Cloudflare → StealthyFetcher
-   │                    │
-   │                    ├─ 기타 WAF(DataDome/PerimeterX/F5)·단순 403
-   │                    │     → curl_cffi 경량 그리드 먼저 (브라우저 앞 티어)
-   │                    │       실패 시 → StealthyFetcher → DynamicFetcher
-   │                    │
-   │                    └─ Akamai/고급 WAF → Chrome CDP 전략 (바로 이동)
-   │                         ※ StealthyFetcher, curl_cffi 시도하지 않음
-   │
-   No
-   │
-JS 렌더링 필요? ──Yes──→ DynamicFetcher (Playwright 브라우저 렌더링)
-   │
-   No
-   │
-Fetcher (기본 HTTP, 가장 가벼움)
+   │ 사다리 A 소진 = 상대가 나를 식별하고 거절했다
+   ▼
+■ 통지 게이트 ■  자동 진행을 멈추고 사용자에게 알린다  [진행 / 중단]
+   │             '진행' 이면 그대로 간다. 근거는 묻지 않는다.
+   ▼
+┌─ 사다리 B — 통지 후 진행 ────────────────────────────────┐
+│  기타 WAF·단순 403  → 4단 curl_cffi 그리드 (브라우저 X)   │
+│  Cloudflare         → 5단 StealthyFetcher                │
+│  Akamai/고급 WAF    → 6단 Chrome CDP (4·5 건너뜀)         │
+└──────────────────────────────────────────────────────────┘
 ```
 
-> **에스컬레이션 순서 = 가벼운 것부터:** 평문 Fetcher → **curl_cffi 그리드(브라우저 X)** → StealthyFetcher → DynamicFetcher → Chrome CDP. 단 Akamai는 예외(curl_cffi/Stealthy 건너뛰고 바로 CDP). 상세 코드는 `references/fetcher-patterns.md § F`, capability 판정 근거는 `references/antibot-strategies.md § WAF capability 라우팅`.
+> **에스컬레이션 순서 = 가벼운 것부터.** 자동 체인은 `plain_get → plain_session → DynamicFetcher` 로 **사다리 A 에서 끝난다.** 그 위(`curl_cffi 그리드` · `StealthyFetcher` · `Chrome CDP`)는 능력으로 전부 남아 있되 **통지 이후에** 진입한다. Akamai 는 4·5 단이 원리적으로 안 통해 통지 후 바로 6단이다. 상세 코드는 `references/fetcher-patterns.md § F`, capability 판정 근거는 `references/antibot-strategies.md § WAF capability 라우팅`.
 
-> profile.json이 있는 도메인은 Akamai 탐지 시그널을 따로 안 봐도 `antibot_type` 필드로 즉시 판정된다 (예: coupang.com → akamai → chrome_cdp 직행).
+> profile.json이 있는 도메인은 Akamai 탐지 시그널을 따로 안 봐도 `antibot_type` 필드로 즉시 판정된다 (`antibot_type: akamai` → `chrome_cdp` 직행). 이미 `consent` 기록이 있는 프로필이면 통지도 생략된다(sticky).
 
 ### Akamai 탐지 시그널
 
-다음 중 하나라도 발견되면 Akamai/고급 WAF로 판단하고 즉시 Chrome CDP로 전환:
+다음 중 하나라도 발견되면 Akamai/고급 WAF로 판단한다. 이건 **사다리 B 진입 신호**이므로 먼저 통지 게이트를 거치고, '진행' 이면 4·5단을 건너뛰고 바로 Chrome CDP로 간다:
 - `Access Denied` + `errors.edgesuite.net` 참조
 - `_abck`, `bm_sz`, `ak_bmsc` 쿠키 존재
 - `sec-if-cpt-container` 챌린지 페이지
@@ -234,20 +236,27 @@ chrome.exe --remote-debugging-port=9222 \
 
 ## Fetcher 에스컬레이션
 
-수집 실패 시 자동으로 상위 Fetcher로 전환:
+수집 실패 시 상위 Fetcher로 전환하되, **자동 전환은 사다리 A 안에서만 일어난다**:
 ```
-Fetcher → curl_cffi 그리드 → StealthyFetcher → DynamicFetcher → agent-browser 폴백 + 사용자 보고
-   (Akamai는 이 체인을 건너뛰고 바로 Chrome CDP)
+[자동] plain_get → plain_session → DynamicFetcher
+   │
+   ■ 통지 게이트 ■  [진행 / 중단] — '진행' 이면 근거를 묻지 않고 그대로 간다
+   │
+[통지 후] curl_cffi 그리드 → StealthyFetcher → Chrome CDP
+   (고급 WAF는 4·5단을 건너뛰고 바로 Chrome CDP)
+   ※ B 안에서 4→5→6 으로 옮겨갈 때는 다시 묻지 않는다 — 이음매는 한 곳이다
 ```
+
+> 체인을 다 소진해도 안 되면 agent-browser 정찰로 원인을 확인하고 사용자에게 보고한다 (agent-browser 로 수집하지는 않는다 — 정찰 전용).
 
 ### 에러별 대응표
 
 | 에러 유형 | 대응 |
 |----------|------|
 | HTTP 429 (Rate Limit) | 대기 시간 2배 증가 후 재시도. 누적 3회면 사용자 보고 |
-| HTTP 403 (Forbidden) | curl_cffi 경량 그리드 먼저 → 실패 시 StealthyFetcher. Akamai 시그널이면 즉시 Chrome CDP |
-| 가짜 200 (소프트블록) | `detect_softblock()`로 감지 — 챌린지/빈 셸/`_abck=~-1~`. 수집 강행 금지, 상위 티어 에스컬레이션 |
-| Cloudflare Challenge | `StealthyFetcher(solve_cloudflare=True)` |
+| HTTP 403 (Forbidden) | 사다리 A 가 남아 있으면 먼저 소진. 남은 게 없으면 **통지 게이트** → '진행' 이면 curl_cffi 그리드 → StealthyFetcher, 고급 WAF 시그널이면 바로 Chrome CDP |
+| 가짜 200 (소프트블록) | `detect_softblock()`로 감지 — 챌린지/빈 셸/`_abck=~-1~`. 수집 강행 금지. 상위 티어가 사다리 B면 **통지 후** 에스컬레이션 |
+| Cloudflare Challenge | 통지 게이트를 거친 뒤 `StealthyFetcher(solve_cloudflare=True)` (5단) |
 | 셀렉터 매칭 실패 | `adaptive=True`로 자가 치유 시도. 재실패 시 정찰 재실행 |
 | 페이지 구조 완전 변경 | 정찰 재실행 → profile.json의 selectors 갱신 |
 | JS 렌더링 실패 | DynamicFetcher로 에스컬레이션. `disable_resources=True`로 경량화 |
@@ -263,7 +272,7 @@ Fetcher → curl_cffi 그리드 → StealthyFetcher → DynamicFetcher → agent
 - **`output/<도메인>/` 의 이전 `crawl_script.py` 참조**: profile.json에 안 박힌 미세 디테일(배치 사이즈, JS evaluate 패턴, 예외 처리)을 그대로 가져와 재사용. 단, raw_data.json은 PII 가능성 있으므로 구조만 확인하고 데이터는 읽지 않는다.
 - `scripts/utils.py`를 import하여 RateLimiter, cookie 관리, 로깅 등 공통 기능 사용
 - `scripts/export_excel.py`를 import하여 엑셀 출력
-- `scripts/chrome_cdp.py`는 Akamai/Naver antibot 등 `antibot_strategy: chrome_cdp` 도메인에서 사용
+- `scripts/chrome_cdp.py`는 `antibot_strategy: chrome_cdp`(사다리 6단)로 기록된 도메인에서 사용 — 통지 게이트를 이미 넘은 경우
 - 수집 스크립트는 해당 작업의 출력 디렉터리 하에서 작업 (아래 출력 위치 참조)
 - 셀렉터 핑거프린트는 `storage_args={"storage_file": "./fingerprints/elements_storage.db"}` 경로 사용
 - **수집 성공 후 반드시 profile.json save/갱신** — 새로 알아낸 endpoint/selector/notes는 누적, `last_used`만 업데이트하지 말 것 (Step 5-A 게이트)
@@ -276,9 +285,10 @@ Fetcher → curl_cffi 그리드 → StealthyFetcher → DynamicFetcher → agent
 - 셀렉터 매핑
 - pagination 방식
 - 데이터 정제 수준
-- 재시도/에스컬레이션
+- 재시도/에스컬레이션 — **사다리 A 안에서만**
 
 ### 사용자에게 묻기
+- **사다리 A→B 이음매를 넘을지 (통지 게이트)** — 자동 접근 차단을 만났을 때. 심사가 아니라 통지이고, '진행' 이면 근거를 묻지 않는다
 - robots.txt 제한 시 진행 여부
 - 디테일 페이지 크롤링 여부 (기본은 리스트만)
 - 로그인 수행 요청
@@ -313,7 +323,7 @@ Fetcher → curl_cffi 그리드 → StealthyFetcher → DynamicFetcher → agent
 
 ```
 output/                                  # gitignore — 수집 결과물
-└── <도메인>/                            # 사이트별 폴더 (예: coupang.com)
+└── <도메인>/                            # 사이트별 폴더 (예: books.toscrape.com)
     ├── <크롤링주제_YYYYMMDD_HHMMSS>/    # 실행 건별 폴더
     │   ├── crawl_result.xlsx            # 최종 엑셀
     │   ├── raw_data.json                # 원시 수집 데이터
@@ -323,17 +333,17 @@ output/                                  # gitignore — 수집 결과물
 
 fingerprints/                            # gitignore + whitelist 정책
 ├── elements_storage.db                  # gitignore — Scrapling 셀렉터 자가 치유 DB (전역 공유)
-└── <sanitized_domain>/                  # 예: coupang_com, www_kurly_com
+└── <sanitized_domain>/                  # 예: books_toscrape_com, www_kurly_com
     ├── profile.json                     # ★ tracked — 도메인 수집 레시피 (절대 규칙 0의 source)
     └── recipe.md                        # tracked (선택) — 추가 노트
 ```
 
 ### 규칙
-- **사이트 폴더 (output/)**: 도메인 기준으로 하나만 생성 (예: `coupang.com`, `naver.com`)
+- **사이트 폴더 (output/)**: 도메인 기준으로 하나만 생성 (예: `books.toscrape.com`, `www.kurly.com`)
 - **작업 폴더**: `<주제요약>_<YYYYMMDD_HHMMSS>` 형식. 주제는 한글/영문 모두 가능, 공백은 `_`로 대체
 - **쿠키**: 사이트 폴더 루트에 저장하여 같은 사이트의 모든 작업이 공유
 - **셀렉터 핑거프린트**: `fingerprints/elements_storage.db` (전역 공유, ignore)
-- **도메인 프로필**: `fingerprints/<sanitized_domain>/profile.json` (commit 대상). `sanitize_filename`은 `[^\w\-]`를 `_`로 치환 — 예: `coupang.com` → `coupang_com`, `made-in-china.com` → `made-in-china_com`
+- **도메인 프로필**: `fingerprints/<sanitized_domain>/profile.json` (commit 대상). `sanitize_filename`은 `[^\w\-]`를 `_`로 치환 — 예: `books.toscrape.com` → `books_toscrape_com`, `made-in-china.com` → `made-in-china_com`
 
 ### .gitignore whitelist 정책
 
@@ -347,16 +357,16 @@ fingerprints/                            # gitignore + whitelist 정책
 
 ```python
 import json
-from scrapling.fetchers import FetcherSession
+from utils import plain_session
 
 # 1. agent-browser로 수동 로그인 후 쿠키 추출 → output/<도메인>/cookies.json 저장
 with open("output/<도메인>/cookies.json") as f:
     cookies = json.load(f)
 
-# 2. Scrapling Session에 주입
-with FetcherSession(impersonate="chrome") as session:
+# 2. 사다리 2단 세션에 주입 (위장 인자 없음 — 로그인 쿠키는 위장이 아니다)
+with plain_session() as session:
     session.cookies.update(cookies)
-    resp = session.get(url, stealthy_headers=True)
+    resp = session.get(url)
 ```
 
 쿠키 파일은 `.gitignore`의 `**/cookies*.json` 패턴으로 자동 차단된다.

@@ -1,5 +1,16 @@
 # 안티봇 대응 전략 레퍼런스
 
+> ## ■ 이 문서의 전략은 전부 통지 이후에 쓴다 ■
+>
+> 여기 담긴 것은 **사다리 B(4~6단)** — 상대가 나를 식별하고 거절한 뒤에 쓰는 방법들이다.
+> 사다리 A(정적 HTML · 숨은 API · JS 렌더링)를 소진하기 전에는 이 문서를 열 이유가 없다.
+>
+> **사다리 B 에 진입할 때는 자동으로 넘어가지 않고 사용자에게 한 번 알린다.**
+> '진행' 을 고르면 그대로 간다 — 근거를 묻지도 검증하지도 않는다. 통지는 심사가 아니다.
+> 문구와 발동 조건은 `SKILL.md` Step 3 "이음매 통지 게이트".
+>
+> 능력은 전부 여기 그대로 있다. 바뀐 것은 **침묵**이다.
+
 사이트의 봇 차단 메커니즘별 대응 전략을 정리한 문서.
 SKILL.md Step 3에서 안티봇이 감지되면 이 문서를 참조한다.
 
@@ -14,7 +25,7 @@ SKILL.md Step 3에서 안티봇이 감지되면 이 문서를 참조한다.
 7. [Cloudflare → StealthyFetcher](#cloudflare--stealthyfetcher)
 8. [Jina Reader 폴백](#jina-reader-폴백)
 9. [종료 사유 분류 — terminal vs retryable](#종료-사유-분류)
-10. [Fetcher 에스컬레이션 자동화](#fetcher-에스컬레이션-자동화)
+10. [우회 티어는 통지 후 진행](#우회-티어는-통지-후-진행)
 
 > 1~4·8·9번은 insane-search(접근/돌파 관점)에서 차용한 전략이다. 5~7번은 이 프로젝트의 검증된 수집 전략.
 
@@ -103,16 +114,16 @@ safari_ios (모바일)
 
 ### 감지 시그널
 
-다음 중 **하나라도** 발견되면 Akamai로 판단하고 즉시 Chrome CDP 전략으로 전환:
+다음 중 **하나라도** 발견되면 Akamai로 판단한다. 사다리 B 진입이므로 통지 게이트를 먼저 거치고, '진행' 이면 4·5단을 건너뛰고 Chrome CDP 전략으로 간다:
 - `Access Denied` 페이지 + `errors.edgesuite.net` 참조
 - `_abck`, `bm_sz`, `ak_bmsc` 쿠키 존재
 - `sec-if-cpt-container` 챌린지 페이지
-- 알려진 Akamai 사이트: coupang.com 등
+- profile.json 에 `antibot_type: akamai` 로 기록된 도메인
 
 ### 핵심 원칙
 
 - **일반 FETCHER_CHAIN을 사용하지 않는다** (StealthyFetcher, DynamicFetcher 시도하지 않음)
-- **즉시 Chrome CDP로 전환한다**
+- **통지가 끝난 뒤에는 4·5단을 거치지 않고 곧바로 Chrome CDP로 전환한다** — 헛고생 방지
 - headless Chrome은 Akamai에 탐지됨 → **headed Chrome** 필수 (macOS/Windows)
 
 ### Chrome CDP 수집 코드 패턴
@@ -323,14 +334,13 @@ page = fetcher.fetch("<URL>", headless=True, solve_cloudflare=True)
 JS 렌더링이 필요하거나 가볍게 막힌 페이지를 **브라우저 없이** 외부 렌더된 마크다운으로 받는 저비용 폴백. (insane-search 차용) DynamicFetcher/Chrome CDP로 에스컬레이션하기 **직전** 단계, 또는 정찰 시 본문 빠른 확인용.
 
 ```python
-from scrapling.fetchers import FetcherSession
+from utils import plain_get   # Jina 는 사다리 A 쪽이다 — 위장 인자를 붙이지 않는다
 
-with FetcherSession(impersonate="chrome") as s:
-    resp = s.get(f"https://r.jina.ai/{target_url}")  # 렌더된 markdown 반환
-    markdown = resp.text
+resp = plain_get(f"https://r.jina.ai/{target_url}")  # 렌더된 markdown 반환
+markdown = resp.text
 ```
 
-- **용도**: 정찰·단발 본문 확인, 가벼운 차단 우회. 페이지네이션/대량 구조화 수집엔 부적합(레코드 추출이 아니라 본문 마크다운).
+- **용도**: 정찰·단발 본문 확인. 페이지네이션/대량 구조화 수집엔 부적합(레코드 추출이 아니라 본문 마크다운).
 - **한계**: 강한 WAF(Akamai 등)는 Jina도 못 뚫는다 → Chrome CDP로.
 
 ---
@@ -349,16 +359,18 @@ with FetcherSession(impersonate="chrome") as s:
 
 ---
 
-## Fetcher 에스컬레이션 자동화
+## 우회 티어는 통지 후 진행
+
+아래 패턴은 사다리 B 안에서의 티어 전환이다. **B 에 처음 들어가는 순간에는 이미 통지가 끝나 있어야 한다** (SKILL.md Step 3). B 안에서 4→5→6 으로 옮겨가는 것은 다시 묻지 않는다 — 이음매는 한 곳이고 이미 넘었다.
 
 범용 에스컬레이션 함수. 어떤 Fetcher를 사용해야 할지 불확실할 때 사용.
 
 **순서: 평문 HTTP → curl_cffi 그리드(브라우저 X) → 브라우저 티어.** 그리드를 브라우저 앞에 둔다.
 
 ```python
-from scrapling.fetchers import Fetcher, StealthyFetcher, DynamicFetcher
+from scrapling.fetchers import StealthyFetcher, DynamicFetcher
 from scrapling import Selector
-from utils import setup_logger, detect_softblock
+from utils import setup_logger, detect_softblock, plain_get
 # fetch_via_grid 는 fetcher-patterns.md § F 참조
 
 logger = setup_logger("escalation")
@@ -367,9 +379,11 @@ def _grid_tier(url):
     r, _ = fetch_via_grid(url)
     return Selector(r.text) if r else None
 
+# 사다리 A 전용 체인(fetcher-patterns.md § FETCHER_CHAIN)과 다른 물건이다 — 이건 B 쪽이고,
+# 여기 진입하기 전에 통지가 이미 끝나 있어야 한다.
 FETCHER_CHAIN = [
-    ("Fetcher",         lambda url: Fetcher().get(url)),                       # 평문 HTTP
-    ("curl_cffi grid",  _grid_tier),                                          # ← 브라우저 앞 티어
+    ("plain_get",       plain_get),                                           # 위장 없는 재시도 (맨 Fetcher().get 은 기본이 impersonate+stealthy_headers 라 평문이 아니다)
+    ("curl_cffi grid",  _grid_tier),                                          # 4단 — 브라우저 앞 티어
     ("StealthyFetcher", lambda url: StealthyFetcher().fetch(url, headless=True)),
     ("DynamicFetcher",  lambda url: DynamicFetcher().fetch(url, network_idle=True)),
 ]
