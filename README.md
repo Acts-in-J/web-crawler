@@ -85,12 +85,15 @@ robots.txt 는 법적 구속력이 없지만 표지판입니다. 무시했다는
 
 ## 이런 걸 할 수 있어요
 
-- 🛒 쇼핑몰 상품 목록·가격·리뷰 (쿠팡, 컬리, 스마트스토어, 네이버 브랜드스토어 등)
-- 📋 정부·공공 입찰공고·공시 (나라장터 g2b, 금융감독원, 서울 열린데이터광장 등)
-- 💼 채용공고 (원티드 등)
+- 🛒 쇼핑몰 상품 목록·가격·리뷰
+- 📋 정부·공공 입찰공고·공시 (나라장터, 금융감독원, 서울 열린데이터광장 등 공공데이터)
+- 💼 채용공고
 - 🏢 부동산·기업정보 등 목록형 데이터
+- 📚 연습용 사이트 (`books.toscrape.com` 등) — 처음 써 볼 때 여기부터
 
 결과는 항상 깔끔한 **엑셀(.xlsx)** 파일로 나옵니다.
+
+> 어떤 사이트에서 수집할지는 사용자가 정합니다. 시작 전에 위 [여섯 조건](#2-여섯-조건-체크리스트)을 확인하세요.
 
 ## 사용법 (설치 후)
 
@@ -111,7 +114,7 @@ robots.txt 는 법적 구속력이 없지만 표지판입니다. 무시했다는
 
 ## 처음 설치하기 (최초 1회)
 
-> 💡 **가장 쉬운 방법** — 아래 [AI 에이전트에게 셋업 맡기기](#ai-에이전트에게-셋업-맡기기-권장)의 프롬프트를 복사해 에이전트에게 주면 알아서 다 설치합니다. 직접 하고 싶으면 그 아래 [수동 설치](#수동-설치)를 따라 하세요.
+> 💡 **가장 쉬운 방법** — 아래 [AI 에이전트에게 셋업 맡기기](#ai-에이전트에게-셋업-맡기기)의 프롬프트를 복사해 에이전트에게 주면 알아서 다 설치합니다. 직접 하고 싶으면 그 아래 [수동 설치](#수동-설치-단계별)를 따라 하세요.
 
 ### 미리 필요한 것
 
@@ -231,7 +234,12 @@ python -m venv .venv
 | **Chromium** | 브라우저 렌더링(DynamicFetcher/StealthyFetcher) | `scrapling install` (playwright Chromium 1회 다운로드) |
 | **openpyxl** | 엑셀(.xlsx) 출력 | (requirements.txt에 포함) |
 | **agent-browser** | **표준 정찰 도구** — 구조 파악·네트워크 감시 (양 host 공통) | `npm.cmd install -g agent-browser` + `agent-browser.cmd install` |
-| **Chrome / Chrome for Testing** | Akamai 등 고급 안티봇 대응 (CDP) | `agent-browser install` 이 함께 처리 |
+| **Chrome / Chrome for Testing** | 브라우저 세션이 필요한 사이트 대응 (CDP) | `agent-browser install` 이 함께 처리 |
+
+> **왜 정찰에만 Node 런타임(agent-browser)이 필요한가.** Playwright 는 Scrapling 으로 이미 깔려오지만,
+> agent-browser 는 AI 에이전트가 몰기 좋은 형태(snapshot/ref)로 설계돼 있어 같은 정찰을 훨씬 적은
+> 토큰으로 끝냅니다. 두 번째 런타임을 설치하는 비용을 주고 그 편의를 산 것이고, **의식적인 선택**입니다.
+> 수집에는 쓰지 않습니다 — 정찰과 수집은 분리돼 있습니다.
 
 ---
 
@@ -254,18 +262,28 @@ python -m venv .venv
 
 > **소프트블록**이란 차단인데 겉으로는 성공(HTTP 200)처럼 보이는 응답입니다. 빈 껍데기 페이지를 정상 데이터로 착각하고 계속 긁으면 차단이 굳어지므로, 다른 검증보다 **먼저** 확인합니다.
 
-### 수집 방법(Fetcher)은 사이트에 따라 자동 선택
+### 수집 방법(Fetcher)은 사이트에 따라 선택 — 어디까지가 자동인가
 
 ```
-API 발견?        → FetcherSession (가장 빠름)
-안티봇 보호?      → Cloudflare        : StealthyFetcher
-                  그 외 WAF·단순 403 : curl_cffi 경량 그리드 → 실패 시 브라우저
-                  Akamai/고급 WAF    : Chrome CDP (앞 단계 건너뜀)
-JS 렌더링 필요?   → DynamicFetcher (브라우저 렌더링)
-그 외            → Fetcher (기본 HTTP)
+[자동]  API 발견?       → plain_session (숨은 API — 가장 빠름)
+        JS 렌더링 필요? → DynamicFetcher (브라우저 렌더링)
+        그 외           → plain_get (기본 HTTP, 위장 없음)
+   │
+   │ 위 셋이 다 막히면 = 사이트가 자동 접근을 거절하고 있다는 뜻
+   ▼
+■ 확인 후 ■  자동 진행을 멈추고 한 번 알립니다  [진행 / 중단]
+   │
+   ▼
+[확인 후]  그 외 WAF·단순 403 : curl_cffi 경량 그리드 (브라우저 X)
+           Cloudflare        : StealthyFetcher
+           Akamai/고급 WAF   : Chrome CDP (앞 단계 건너뜀)
 ```
 
-수집이 실패하면 **가벼운 것부터** 자동으로 단계적 전환(에스컬레이션)합니다 — `Fetcher → curl_cffi 그리드 → StealthyFetcher → DynamicFetcher → Chrome CDP`. 브라우저를 띄우기 전에 저비용 방법을 먼저 시도하는 구조입니다. 단 Akamai는 앞 단계가 통하지 않으므로 곧장 Chrome CDP로 갑니다.
+수집이 실패하면 **가벼운 것부터** 자동으로 단계적 전환합니다 — `plain_get → plain_session → DynamicFetcher`. 여기까지는 사이트가 나를 막은 게 아니라 **데이터가 있는 위치가 다를 뿐**이라 자동으로 진행합니다.
+
+**그 위부터는 자동으로 넘어가지 않습니다.** 사이트가 자동 접근을 차단하고 있다면(봇 탐지·WAF·CAPTCHA), 에이전트가 **한 번 알리고 진행 여부를 묻습니다.** '진행' 을 고르면 그대로 진행하며 — 근거를 제출받거나 검증하지 않습니다 — 그 선택은 도메인 프로필에 기록됩니다. 같은 사이트를 다시 수집할 때는 묻지 않습니다.
+
+판단의 주체를 도구에서 사용자로 옮기는 것이 이 확인 절차의 목적입니다.
 
 ---
 
@@ -275,7 +293,7 @@ JS 렌더링 필요?   → DynamicFetcher (브라우저 렌더링)
 
 ```json
 {
-  "domain": "wanted.co.kr",
+  "domain": "example.com",
   "fetcher_type": "FetcherSession",
   "antibot_type": "none",
   "antibot_strategy": "none",
@@ -290,7 +308,10 @@ JS 렌더링 필요?   → DynamicFetcher (브라우저 렌더링)
 
 - **저장은 필수.** Step 5-A 게이트 — 빠뜨리면 다른 머신/세션에서 노하우가 사라진다.
 - **`notes` 비우지 않기.** "Akamai라 chrome_cdp 필수", "review API는 HTML 반환" 같은 결정적 메타 정보.
-- **자격증명 박지 않기.** profile.json은 commit 대상이므로 API key/토큰/쿠키는 별도 파일로 분리.
+- **자격증명 박지 않기.** 배포되는 profile.json은 commit 대상이므로 API key/토큰/쿠키는 별도 파일로 분리.
+- **확인을 거친 프로필은 그 선택을 함께 기록한다.** 자동 접근 차단을 넘어선 방법으로 수집했다면 `consent` 블록(알린 시각과 사용자의 선택)이 함께 저장됩니다. 무엇을 정당화했는지가 아니라 **알렸고 사용자가 골랐다는 사실**만 남습니다.
+
+> **이미 `fingerprints/` 를 갖고 있다가 이 버전으로 올린 경우.** 확인 절차를 넘어선 방법(예: `chrome_cdp`, `stealthy`)이 적힌 기존 프로필에 `consent` 기록이 없으면, 다음 저장에서 `ConsentRequired` 로 한 번 멈춥니다. **버그가 아니라 설계된 동작입니다** — 예전에는 그런 프로필이 조용히 배포 대상으로 분류됐고, 이제는 사용자에게 한 번 알린 사실이 있어야 저장이 끝납니다. 알리고 '진행' 을 고른 뒤 그 시각과 선택을 `consent` 에 적으면 이어서 진행되고, 그 도메인은 다음부터 다시 묻지 않습니다.
 
 <!-- BEGIN GENERATED: domain-list -->
 <!-- 이 블록은 scripts/sync_domain_list.py 가 생성한다. 직접 수정하지 말 것. -->
@@ -308,7 +329,7 @@ JS 렌더링 필요?   → DynamicFetcher (브라우저 렌더링)
 | 경로 | 상태 | 내용 |
 |------|------|------|
 | `scripts/` · `.claude/` · `.codex/` | ✓ tracked | 공통 모듈, 에이전트 지시서·스킬 |
-| `fingerprints/<도메인>/profile.json` | ✓ tracked | 도메인 수집 레시피 (자격증명 제외) |
+| `fingerprints/<도메인>/profile.json` | 배포 판정 통과분만 tracked | 도메인 수집 레시피 (자격증명 제외). 판정은 `scripts/profile_policy.py` |
 | `output/` | 로컬 전용 | 수집 결과물 — 제3자 콘텐츠·PII 가능 |
 | `autoresearch-web-crawler/` | 로컬 전용 | 스킬 평가 실험 run 데이터 |
 | `docs/` | 로컬 전용 | 내부 기획·설계 노트 |
@@ -319,7 +340,7 @@ JS 렌더링 필요?   → DynamicFetcher (브라우저 렌더링)
 
 ```
 output/                              # gitignore — 수집 결과물
-└── <도메인>/                        # 예: coupang.com
+└── <도메인>/                        # 예: example.com
     ├── <주제_YYYYMMDD_HHMMSS>/      # 실행 건별 폴더
     │   ├── crawl_result.xlsx        # 최종 엑셀
     │   ├── raw_data.json            # 원시 데이터
@@ -327,27 +348,35 @@ output/                              # gitignore — 수집 결과물
     │   └── crawl_script.py          # 생성된 수집 스크립트
     └── cookies.json                 # ignored — 로그인 쿠키 (같은 사이트의 모든 작업이 공유)
 
-fingerprints/                        # gitignore + whitelist
+fingerprints/                        # gitignore + 배포 화이트리스트 (default-deny)
 ├── elements_storage.db              # ignored — Scrapling 셀렉터 자가치유 DB (전역 공유)
-└── <sanitized_domain>/              # 예: coupang_com, www_kurly_com
-    ├── profile.json                 # ✓ tracked — 도메인 수집 레시피
+└── <sanitized_domain>/              # 예: example_com, www_example_co_kr
+    ├── profile.json                 # 배포 판정 통과분만 tracked — 도메인 수집 레시피
     └── recipe.md                    # ✓ tracked (선택) — 추가 노트
 ```
 
 ## 안전 규칙 (에이전트가 항상 지킴)
 
-- **CAPTCHA 자동 우회 안 함** — 뜨면 사용자에게 보고 후 중단
-- **로그인 자격증명 저장 안 함** — 사용자가 직접 로그인 → 쿠키만 추출
-- **robots.txt 차단 시 사용자에게 확인**
-- **PII(전화번호·주민번호·이메일 등) 감지 시 경고·보고**
+- **자동 접근 차단을 만나면 한 번 확인** — CAPTCHA·WAF·봇 탐지를 만나면 자동으로 넘어가지 않고 사용자에게 알리고 묻습니다. *능력이 없어서가 아니라, 판단의 주체가 사용자이기 때문입니다.* '진행' 을 고르면 그대로 진행합니다
+- **CAPTCHA 자동 풀이는 하지 않음** — 위 확인과 별개입니다. *프로그램으로 CAPTCHA 를 푸는 것은 보호조치의 직접적 무력화입니다*
+- **로그인 자격증명 저장 안 함** — 사용자가 직접 로그인하고 쿠키만 추출합니다. *자격증명이 파일이나 로그에 남지 않게 하기 위해서입니다*
+- **robots.txt 를 실제로 확인** — 정찰 전에 `check_robots()` 로 읽고, 차단이면 사용자에게 묻습니다. *robots.txt 는 법적 구속력이 없지만, 무시했다는 사실은 "알고도 했다" 의 정황이 됩니다*
+- **요청 간격·총량 상한** — 기본 1~2초 간격, 지연 하한 0.5초, 연속 rate limit 응답 3회면 중단합니다. *부담은 접근과 별개 축이고 여기에도 형사 층(업무방해)이 있습니다*
+- **PII 감지 시 경고·보고** — 값 패턴(이메일·전화)과 컬럼명(작성자·닉네임 등) 양쪽을 봅니다. *개인정보보호법은 영리 여부를 묻지 않습니다*
 - **불법 스크래핑(저작권·개인정보 대량수집·ToS 위반) 거절**
+- **수집한 데이터의 이용 범위는 사용자 책임** — 이 도구는 수집을 돕지, 수집 이후의 재배포·경쟁 서비스·학습데이터 이용에 대해 판단하지 않습니다. *"어떻게 들어갔나" 와 "가져다 뭘 했나" 는 다른 질문이고 다른 법이 답합니다*
+
+> **'거절' 과 '확인' 은 다른 층위입니다.** 거절은 에이전트가 명백히 위법이라고 본 **요청 자체를**
+> 받지 않는 것이고(마지막에서 두 번째 규칙), 확인은 기술적 차단을 만났을 때 **알리고 사용자가
+> 고르는** 것입니다(첫 번째 규칙). 확인 절차는 거절하지 않습니다 — '진행' 을 뒤집는 근거로
+> 쓰이지 않습니다.
 
 ## .gitignore 정책
 
 단일 public 레포이므로, 수집한 데이터가 실수로 공개되지 않도록 세 겹으로 막습니다.
 
 1. **수집 결과물 통째 차단** — `output/`, `crawl_data/`, `autoresearch-web-crawler/`, `docs/`. 스크랩한 제3자 콘텐츠(리뷰 본문·작성자명 등)가 레포에 들어가지 않습니다.
-2. **fingerprints whitelist** — `fingerprints/**`를 통째로 ignore하되 `profile.json`과 `recipe.md`만 whitelist로 commit.
+2. **fingerprints 배포 화이트리스트 (default-deny)** — `fingerprints/**` 를 통째로 ignore 하고, **배포 대상으로 판정된 프로필만** 명시적으로 whitelist 합니다. 이 목록은 `scripts/profile_policy.py` 의 판정 결과로 `scripts/sync_domain_list.py` 가 생성합니다. 자동 접근 차단을 넘어선 방법을 기록한 프로필은 **로컬에 남되 배포되지 않습니다** — 능력은 그대로고 레시피만 빠집니다.
 3. **자격증명 재차단** — `**/cookies*.json`, `**/auth*.json`, `**/*token*.json`, `**/*secret*` 를 whitelist **뒤에** 배치해 last-match-wins로 다시 막습니다.
 
 ```bash
