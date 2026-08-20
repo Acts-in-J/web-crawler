@@ -317,3 +317,76 @@ def test_acceptable_use_does_not_speak_for_the_agent():
         "사라졌습니다 — 이 문서가 지킬 수 없는 약속을 하게 됩니다"
     )
     assert "에이전트가 멈추는 경우가 있을 수 있습니다" in section
+
+
+# ── 통지 재질문 여부: 도메인이 아니라 프로필의 consent 기록 ──────────────────
+#
+# 356716a 는 "도메인당 1회" 를 "이음매를 통과할 때마다 1회" 로 다섯 곳에서 고쳤지만, 그
+# 변경 자체는 리터럴 '도메인당' 검색으로 스윕됐다 — README.md 의 '작동 방식' 절은 같은
+# 주장("같은 사이트를 다시 수집할 때는 묻지 않습니다")을 그 낱말 없이 하고 있어서 그
+# 스윕에서도, 이 파일의 기존 어떤 테스트에서도 걸리지 않고 살아남았다. 문구가 아니라
+# 주장을 검사해야 이런 회귀를 잡는다.
+
+
+def _readme_operation_summary_section() -> str:
+    """README.md 의 '작동 방식 (요약)' 절만 잘라 반환 (다음 '##' 절 직전까지)."""
+    return _section(README, "## 작동 방식 (요약)", "## 도메인 프로필")
+
+
+def test_readme_operation_summary_reask_is_keyed_to_consent_not_domain():
+    """README.md 작동 방식 절 — 재질문 여부는 도메인이 아니라 프로필의 consent 기록에
+    달려 있어야 한다.
+
+    한때 이 절은 "같은 사이트를 다시 수집할 때는 묻지 않습니다" 라고 단정했다 — 도메인
+    단위의 once-ever 주장이고, B→A→B 로 돌아온 도메인이 실제로는 재통지된다는 사실과
+    어긋난다. 조건화된 새 문구가 살아 있는지, 그리고 옛 단정이 돌아오지 않았는지 둘 다
+    확인한다 — 둘 중 하나만 보면 문구만 바뀌고 뜻은 되돌아가는 회귀를 놓친다.
+    """
+    section = _readme_operation_summary_section()
+    assert "그 프로필이 그 기록을 들고 있는 동안은 다시 묻지 않습니다" in section, (
+        "README.md 작동 방식 절에서 재질문 조건이 프로필의 consent 기록으로 걸리지 않습니다"
+    )
+    assert "같은 사이트를 다시 수집할 때는 묻지 않습니다" not in section, (
+        "README.md 작동 방식 절이 도메인 단위 once-ever 주장으로 되돌아갔습니다 — "
+        "면제 근거는 도메인이 아니라 프로필이 지금 들고 있는 consent 기록입니다"
+    )
+
+
+FREQUENCY_CLAIM_SECTIONS = [
+    pytest.param(
+        README, "## 도메인 프로필 (재수집 가속)", "## 레포 구조",
+        "확인이 면제되는 근거는 도메인이 아니라 프로필이 지금 들고 있는 `consent` 기록입니다",
+        id="README.md",
+    ),
+    pytest.param(
+        CLAUDE_MD, "## ★ 절대 규칙 0: 도메인 히스토리 우선 (모든 수집의 시작)", "## 범위 / 운영 안전 규칙",
+        "통지는 도메인당 1회가 아니라 이음매를 통과할 때마다 1회다",
+        id="CLAUDE.md",
+    ),
+    pytest.param(
+        AGENTS_MD, "## 안전 — 하드룰 (위반 금지)", "## 빠른 참조",
+        "통지를 면제하는 것은 도메인이 아니라 그 프로필이 **지금 들고 있는** `consent` 기록이다",
+        id="AGENTS.md",
+    ),
+    pytest.param(
+        SKILL, "### ■ 이음매 — 통지 게이트 ■", "### 사다리 B — 상대가 막고 있다",
+        "면제하는 것은 도메인이 아니라 그 프로필이 **지금 들고 있는 `consent` 기록**이다",
+        id="SKILL.md",
+    ),
+]
+
+
+@pytest.mark.parametrize("path,start,end,phrase", FREQUENCY_CLAIM_SECTIONS)
+def test_frequency_claim_is_keyed_to_consent_not_domain(path, start, end, phrase):
+    """네 문서 각각의 해당 절에 "재질문 여부는 도메인이 아니라 프로필의 consent 기록에
+    달려 있다" 는 진술이 살아 있어야 한다.
+
+    README.md 작동 방식 절은 여기 넣지 않는다 — 그 절은 같은 주장을 이 표의 문서들과
+    다른 문구로 하고, 옛 단정의 회귀도 함께 확인해야 하므로 위
+    test_readme_operation_summary_reask_is_keyed_to_consent_not_domain 이 따로 다룬다.
+    """
+    section = _section(path, start, end)
+    assert phrase in section, (
+        f"{path.name} 의 해당 절에서 '재질문 여부는 도메인이 아니라 프로필의 consent 기록에 "
+        "달려 있다' 는 진술이 사라졌습니다"
+    )
