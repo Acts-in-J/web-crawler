@@ -6,7 +6,7 @@ SKILL.md Step 3에서 결정된 전략에 맞는 패턴을 선택하여 사용�
 ## 목차
 
 1. [공통 필수 패턴](#공통-필수-패턴) — 모든 수집 코드에 적용
-2. [A: API 직접 수집 (FetcherSession)](#a-api-직접-수집)
+2. [A: API 직접 수집 (plain_session)](#a-api-직접-수집)
 3. [B-1: 정적 HTML 수집 (Fetcher)](#b-1-정적-html-수집)
 4. [B-2: 동적/JS 사이트 수집 (DynamicFetcher)](#b-2-동적js-사이트-수집)
 5. [F: curl_cffi 경량 그리드 (브라우저 전 돌파)](#f-curl_cffi-경량-그리드)
@@ -24,28 +24,30 @@ SKILL.md Step 3에서 결정된 전략에 맞는 패턴을 선택하여 사용�
 
 모든 수집 코드에 반드시 포함할 요소:
 
-### FETCHER_CHAIN 에스컬레이션
+### FETCHER_CHAIN 에스컬레이션 (사다리 A 전용)
 
-연속 실패 시 상위 Fetcher로 자동 전환한다. **순서는 "가벼운 것부터" — 평문 HTTP → curl_cffi 그리드(브라우저 X) → 브라우저 티어.** curl_cffi 그리드를 브라우저(Stealthy/Dynamic) **앞**에 둬서, 브라우저를 띄우기 전에 저비용으로 먼저 뚫어본다 (insane-search 차용). Akamai/SPA 세션 사이트에서는 이 체인을 사용하지 않는다.
+연속 실패 시 상위 티어로 자동 전환한다. **이 체인은 사다리 A(1~3단)에서 끝난다.**
+
+사다리 1~3단에서 사이트는 나를 막은 적이 없다 — 데이터가 있는 **위치**가 다를 뿐이다. 4단부터가 처음으로 "상대가 나를 식별하고 거절한" 상황이고, 거기부터는 **자동으로 넘어가지 않고 사용자에게 한 번 통지한다** (SKILL.md Step 3 "이음매 통지 게이트").
+
+우회 능력은 전부 그대로 있다. 자동 순차 진입에서 빠진 것뿐이다.
 
 ```python
-from scrapling.fetchers import Fetcher, StealthyFetcher, DynamicFetcher
-from scrapling import Selector
-# fetch_via_grid 는 "F: curl_cffi 경량 그리드" 섹션 참조 (돌파 실패 시 (None, trace))
+from scrapling.fetchers import DynamicFetcher
+from utils import plain_get, plain_session
 
 ITEM_SELECTOR = "<ITEM_SELECTOR>"
 
-def _grid_tier(url):
-    """curl_cffi 그리드 — 돌파 성공 시 Selector, 실패 시 None(다음 티어로)."""
-    r, _ = fetch_via_grid(url, item_selector=ITEM_SELECTOR)
-    return Selector(r.text) if r else None
+def _session_tier(url):
+    """2단 — 세션·쿠키를 유지한 채 재시도. 숨은 API 호출에도 이 세션을 쓴다."""
+    with plain_session() as session:
+        return session.get(url)
 
 # 각 티어는 url을 받아 page(.css 가능) 또는 None을 반환하는 callable
 FETCHER_CHAIN = [
-    ("Fetcher",         lambda url: Fetcher().get(url)),                       # 평문 HTTP (가장 가벼움)
-    ("curl_cffi grid",  _grid_tier),                                          # ← 브라우저 앞 티어
-    ("StealthyFetcher", lambda url: StealthyFetcher().fetch(url, headless=True)),
-    ("DynamicFetcher",  lambda url: DynamicFetcher().fetch(url, network_idle=True)),
+    ("plain_get",      plain_get),                                            # 1단 정적 HTML (위장 없음)
+    ("plain_session",  _session_tier),                                        # 2단 숨은 API·세션 유지
+    ("DynamicFetcher", lambda url: DynamicFetcher().fetch(url, network_idle=True)),  # 3단 JS 렌더링
 ]
 
 results = []
@@ -57,9 +59,6 @@ for page_num in range(1, max_pages + 1):
         limiter.wait()
         page = FETCHER_CHAIN[current_fetcher_idx][1](url)
 
-        # 그리드 티어: 내부에서 이미 detect_softblock 검증 후 None(미돌파)/Selector 반환
-        #   → Selector엔 .status가 없어 getattr 기본 200, 실제 차단판정은 아래 css 매칭이 담당.
-        # 브라우저 티어(Fetcher/Stealthy/Dynamic): .status 인스턴스 속성 보유 → 여기서 체크.
         if page is None or (getattr(page, "status", 200) != 200):
             raise Exception("blocked or non-200")
         if not page.css(ITEM_SELECTOR):          # 소프트블록(가짜 200) 방어
@@ -76,6 +75,10 @@ for page_num in range(1, max_pages + 1):
             current_fetcher_idx += 1
             logger.info(f"Escalating to {FETCHER_CHAIN[current_fetcher_idx][0]}")
             consecutive_errors = 0
+        elif consecutive_errors >= 2:
+            # 사다리 A 를 다 썼다. 다음은 사다리 B — 자동으로 넘어가지 않는다.
+            logger.error("사다리 A 소진 — 사다리 B 진입은 사용자 통지가 필요하다 (SKILL.md Step 3)")
+            break
         elif consecutive_errors >= 5:
             logger.error("5회 연속 실패, 중단")
             break
@@ -88,10 +91,11 @@ for page_num in range(1, max_pages + 1):
 ```
 
 **핵심 규칙:**
-- except 블록에서 반드시 `continue` — 절대 `break`로 중단하지 않는다
-- 연속 5회 실패 시에만 최종 중단
-- **그리드는 브라우저 앞 티어** — 평문 실패 시 브라우저를 띄우기 전에 curl_cffi 격자를 먼저 돌린다
-- **Akamai는 이 체인 자체를 쓰지 않는다** — 바로 Chrome CDP (antibot-strategies.md § WAF capability 라우팅)
+- except 블록에서 반드시 `continue` — 페이지 하나의 실패로 전체를 중단하지 않는다
+- **체인은 3단에서 끝난다.** 사다리 A 를 소진하면 루프를 빠져나와 사용자에게 통지한다
+- **`plain_get`/`plain_session` 을 쓴다** — 맨 `Fetcher().get(url)` 은 기본값이 `impersonate="chrome"` + `stealthy_headers=True` 라 **평문이 아니다**. 헤더 16개에 가짜 `Referer: https://www.google.com/` 까지 붙는다
+- **두 인자를 함께 끈다.** 하나만 끄면 불일치 지문이 되어 오히려 더 잘 탐지된다
+- **Akamai 는 이 체인 자체를 쓰지 않는다** — 통지 후 바로 Chrome CDP (antibot-strategies.md § WAF capability 라우팅)
 
 ### 소프트블록 사전 검증 (첫 페이지 — 대량 루프 진입 전 필수)
 
@@ -100,12 +104,14 @@ for page_num in range(1, max_pages + 1):
 ```python
 from utils import detect_softblock
 
-first = fetcher.get(start_url)  # 또는 .fetch(...)
+first = plain_get(start_url)    # 또는 현재 티어의 호출
 v = detect_softblock(first.html_content, status=first.status,
                      selector_hit=bool(first.css("<ITEM_SELECTOR>")))
 if v["blocked"]:
     logger.error(f"소프트블록 — {v['verdict']}: {v['signals']}")
-    raise SystemExit("수집 중단: 상위 Fetcher로 에스컬레이션 필요 (antibot-strategies.md)")
+    # 사다리 A 가 남아 있으면 다음 A 티어로. 남은 게 없으면 여기가 이음매다 —
+    # 자동으로 사다리 B 로 넘어가지 말고 사용자에게 알린다 (SKILL.md Step 3).
+    raise SystemExit("수집 중단: 사다리 A 소진 — 이음매 통지 게이트로")
 ```
 
 ### 부분 데이터 저장
@@ -124,26 +130,27 @@ CollectSpider(crawldir="./crawl_data").start()
 
 ## A: API 직접 수집
 
-API를 발견했으면 반드시 FetcherSession을 사용한다. 기본 Fetcher로 API를 호출하지 않는다.
+API를 발견했으면 반드시 세션을 사용한다 — 단발 `plain_get` 이 아니라 쿠키·연결을 유지하는 2단 세션이다.
+**`plain_session()` 을 쓴다**: 맨 `FetcherSession()` 은 기본값이 `impersonate="chrome"` +
+`stealthy_headers=True` 라 사다리 2단이 아니라 4단(지문 정렬) 행동이고, 그건 이음매 너머다(위 § 96줄).
 
 ```python
 import json, sys
 sys.path.insert(0, './scripts')
-from utils import RateLimiter, setup_logger
-from scrapling.fetchers import FetcherSession
+from utils import RateLimiter, setup_logger, plain_session
 
 logger = setup_logger("api_crawler")
 limiter = RateLimiter(delay=1.0)
 results = []
 
-with FetcherSession(impersonate='chrome') as session:
+with plain_session() as session:
     page_num = 1
     while True:
         limiter.wait()
         url = f"<API_URL>?page={page_num}&limit=<LIMIT>"
         logger.info(f"API call page {page_num}: {url}")
 
-        resp = session.get(url, stealthy_headers=True)
+        resp = session.get(url)
         if resp.status != 200:
             logger.warning(f"Status {resp.status}, stopping")
             break
@@ -176,19 +183,17 @@ with open("./output/raw_data.json", "w", encoding="utf-8") as f:
 ```python
 import json, sys
 sys.path.insert(0, './scripts')
-from utils import RateLimiter, setup_logger
-from scrapling.fetchers import Fetcher
+from utils import RateLimiter, setup_logger, plain_get
 
 logger = setup_logger("crawler")
 limiter = RateLimiter(delay=1.0)
 results = []
-fetcher = Fetcher()
 
 page_num = 1
 while True:
     limiter.wait()
     url = f"<BASE_URL>?page={page_num}"
-    page = fetcher.get(url)
+    page = plain_get(url)          # 맨 Fetcher().get 이 아니다 — 위 § 96줄 참조
     if page.status != 200:
         break
 
@@ -267,6 +272,10 @@ page = fetcher.fetch(url, network_idle=True, page_action=custom_action)
 ---
 
 ## F: curl_cffi 경량 그리드
+
+> **이 절은 사다리 4단이다 — 통지 이후에 쓴다.** 여기 들어왔다는 것은 사다리 A 를 소진했고
+> 상대가 나를 식별해 거절했다는 뜻이다. 자동으로 넘어오지 않고 사용자에게 한 번 알린 뒤,
+> '진행' 을 고르면 그대로 간다 (`SKILL.md` Step 3 "이음매 통지 게이트").
 
 브라우저를 띄우기 전, TLS 지문 위조 HTTP 요청을 **격자로 완전탐색**해 저비용으로 뚫는다. (insane-search Phase 1 차용) DataDome/PerimeterX/단순 403에 효과적. **Akamai는 제외** — `antibot-strategies.md § WAF capability 라우팅` 참조.
 
@@ -373,7 +382,9 @@ class CollectSpider(Spider):
     concurrent_requests = 5
 
     def configure_sessions(self, manager):
-        manager.add("default", AsyncFetcherSession(impersonate="chrome"))
+        # 비동기 세션에는 plain_session() 래퍼가 없으므로 PLAIN_KWARGS 를 직접 넘긴다.
+        # 두 인자는 반드시 함께 끈다 — 한쪽만 끄면 불일치 지문이 되어 오히려 악화다.
+        manager.add("default", AsyncFetcherSession(impersonate=None, stealthy_headers=False))
 
     async def parse(self, response: Response):
         for item in response.css("<ITEM_SELECTOR>"):

@@ -55,6 +55,7 @@ if profile_mgr.exists(domain):
     profile = profile_mgr.load(domain)
     # "이전 설정을 재사용할까요?"
     #   → Yes(재사용): Phase 0(1-B) 건너뛰고 바로 Step 3 (검증된 레시피 보유)
+    #     단 consent 기록이 없는 사다리 B 프로필이면 이번이 최초 통과다 — Step 3 의 이음매 통지를 거친다.
     #   → No(신규·미재사용)·프로필 없음: Step 1-B(Phase 0)부터 진행
 ```
 
@@ -62,12 +63,17 @@ if profile_mgr.exists(domain):
 ```python
 profile_mgr.save(domain, {
     "domain": domain,
-    "fetcher_type": "<SELECTED_FETCHER>",
+    "fetcher_type": "<Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION|yt-dlp|RSS|oEmbed|Jina>",
+    "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot>",
     "site_type": "<static|csr|api|spa_session|akamai>",
     "selectors": {<MAPPING>},
     "pagination": {<CONFIG>},
     "api_endpoints": [<LIST>],
     "notes": "<특이사항>",
+    # 사다리 B(4단 이상)로 수집했을 때만. **실제로 통지했고 사용자가 '진행' 을 고른 경우에만 적는다** —
+    # 그 일이 없었으면 이 블록을 적지 않는다. 적으면 기록이 거짓이 되고, 이 기록의 유일한 쓸모가 사라진다.
+    # 근거가 아니라 선택을 적는다. 이미 `consent` 기록이 있는 프로필이면 자동으로 이어지므로(sticky) 생략해도 된다.
+    "consent": {"notified_at": "<통지한 실제 시각 ISO8601>", "choice": "proceed"},
 })
 ```
 
@@ -83,13 +89,36 @@ profile_mgr.save(domain, {
 | Reddit | 서브레딧/스레드 `.rss` (Atom) | |
 | Hacker News | Firebase JSON API | |
 | 네이버 검색·금융 | 비공식 JSON 엔드포인트 | 도메인 프로필 참조 |
-| 일반 사이트 (가볍게 막힘/SPA 렌더) | `https://r.jina.ai/<URL>` | 정찰·단발 본문용, 대량 수집엔 부적합 |
+| 일반 사이트 (SPA 렌더·단발 본문 추출) | `https://r.jina.ai/<URL>` | 정찰·단발 본문용, 대량 수집엔 부적합 |
 
 **판정:** Phase 0로 데이터가 충분히 나오면 → 정찰 스킵, Step 3 분류 트리도 건너뛰고 수집(Step 4)으로. 안 되면 → Step 2 정찰로 정상 진행.
 
 ---
 
 ## Step 2: 정찰 (agent-browser)
+
+### Step 2-0: robots.txt 확인 (필수 · 정찰 전)
+
+정찰 요청을 보내기 **전에** 한 번 확인한다. 산문 지시가 아니라 실제 호출이다:
+
+```python
+from utils import check_robots
+
+verdict = check_robots(target_url)
+if verdict["error"]:
+    # 가져오지 못한 것과 허용된 것은 다르다 — 사용자에게 '확인 못 함' 으로 알린다
+    ...
+elif not verdict["allowed"]:
+    # 차단 — 진행 여부를 사용자에게 묻는다. 임의로 진행하지 않는다
+    ...
+if verdict["crawl_delay"]:
+    limiter = RateLimiter(delay=max(verdict["crawl_delay"], 1.0))
+```
+
+- **차단이면 사용자 확인 없이 진행하지 않는다.**
+- `crawl_delay` 가 있으면 RateLimiter 기본값보다 우선한다.
+- `error` 가 있으면 "허용됨" 이 아니라 "확인 못 함" 이다 — 사용자에게 그대로 알린다.
+- robots.txt 는 법적 구속력이 없지만 표지판이다. 무시했다는 사실은 "알고도 했다" 의 정황이 된다.
 
 > **agent-browser는 이 프로젝트의 표준 정찰 도구다 (선택 아님).** 단순 정적 사이트를 긁더라도 정찰 단계에서는 agent-browser를 먼저 사용한다.
 >
@@ -110,7 +139,7 @@ profile_mgr.save(domain, {
 
 ### 정찰 규칙
 - agent-browser 접근 **최대 2회** 시도
-- 2회 실패 시 Chrome CDP 전략으로 전환
+- 2회 실패 시 **Step 3 의 이음매 통지 게이트로 돌아간다** — 정찰 단계에서도 사다리 B 진입은 사용자 확인을 거친다
 - 같은 도메인에 **5분 내 3회 이상 접근하지 않음**
 
 ### 정찰 항목
@@ -207,53 +236,107 @@ agent-browser를 못 쓰고 현재 Codex 세션에 `chrome:control-chrome` 스�
 
 ## Step 3: 사이트 분류 & 수집 전략 결정
 
-정찰 결과에 따라 사이트를 분류하고, 적합한 수집 전략을 선택한다. 이것이 전체 워크플로우에서 가장 중요한 결정이다.
+정찰 결과로 사이트를 분류하고 수집 전략을 고른다. 전체 워크플로우에서 가장 중요한 결정이다.
 
 > **Phase 0 선행 확인됨 가정.** 여기 오기 전 [Step 1-B](#step-1-b-phase-0-공인-우회로-체크)에서 공인 API/피드(yt-dlp·RSS·oEmbed·Jina)를 이미 확인했다. Phase 0로 해결됐으면 이 트리를 건너뛴다.
 
-### 사이트 분류 의사결정 트리
+### 사다리는 둘이 이어붙은 것이다
 
 ```
-정찰에서 API 발견?
-├── Yes → API 직접 호출 가능?
-│   ├── Yes → (A) API 직접 수집 (FetcherSession)
-│   └── No (403/세션 필요) → (E) SPA 세션 인터셉트 (Playwright)
-│
-└── No → 안티봇 보호?
-    ├── Akamai 감지 → (D) Chrome CDP 전략  ※ curl_cffi/Stealthy 건너뜀
-    ├── Cloudflare 감지 → (C) StealthyFetcher
-    ├── 기타 WAF(DataDome/PerimeterX/F5 등) 또는 단순 403
-    │     → (F) curl_cffi 경량 그리드 먼저  ← 브라우저 띄우기 전 저비용 돌파
-    │         (impersonate × URL변형 × referer 조합, antibot-strategies.md 참조)
-    │         실패 시 → StealthyFetcher → DynamicFetcher 순 에스컬레이션
-    └── 없음 → JS 렌더링 필요?
-        ├── Yes → (B-2) DynamicFetcher
-        └── No → (B-1) Fetcher (기본 HTTP)
+사다리 B   "상대가 나를 막고 있다"      ← 돌파. 통지 후 진행
+──────────────────────────────────    ← 이음매: 성격이 바뀌는 지점
+사다리 A   "데이터가 어디 있나"         ← 탐색. 자동
 ```
 
-> **에스컬레이션 순서 원칙:** 가벼운 것부터. `(F) curl_cffi 그리드`(브라우저 X) → `StealthyFetcher` → `DynamicFetcher` → `Chrome CDP`. 단 **Akamai는 예외** — curl_cffi/Stealthy를 건너뛰고 바로 Chrome CDP (이유는 antibot-strategies.md "WAF capability 라우팅").
+1~3단에서 사이트는 나를 막은 적이 없다. **데이터가 있는 위치가 다를 뿐이다.** 4단부터가 처음으로 "상대가 나를 식별하고 거절한" 상황이다. 통지 게이트가 정확히 이 이음매에 놓이는 것은 우연이 아니다.
+
+### 사다리 A — 데이터가 어디 있나 (자동 · 통지 없음)
+
+| 칸 | 비유 | 판별 | 도구 | 페이지당 요청 |
+|---|---|---|---|---|
+| **0** 공식 API·공개데이터 | 그냥 주는 것 | 개발자 문서 / data.go.kr | `plain_session` | 1 |
+| **1** 정적 HTML | 종이에 글자가 이미 있다 | `Ctrl+U` 소스에 보임 | `plain_get` | 1 |
+| **2** 숨은 API | 종이엔 없고 **전화번호**가 적혀 있다 | Network 탭 XHR 응답에 데이터 | `plain_session` | 1 |
+| **3** 렌더링 | 전화를 **브라우저만** 걸 수 있다 | 내부 주소 직접 호출 시 토큰·서명 부족 | `DynamicFetcher` | **수십~수백** |
+
+- **2단이 사다리의 심장이다.** 가장 자주 정답이고 가장 자주 건너뛰어진다. WAF 가 감지돼도 API 를 찾으면 우회 없이 끝나는 경우가 많다 — **우회한 게 아니라 우회할 필요가 없는 길을 찾은 것.**
+- **3단의 더 나은 변형**: 화면을 그리되 DOM 을 읽지 말고 **응답을 가로챈다**(`page.on("response")`). 브라우저는 띄우되 데이터는 JSON 으로 받으므로 정확하고 구조 변경에 강하다.
+- **비용 절벽은 2→3 사이다.** 요청 수가 1 → 수십~수백으로 뛴다(부담 축과 직결).
+- **위장 경계는 3→4 사이다.** 사다리 A 에서는 지문을 위장하지 않는다. `plain_get`/`plain_session` 이 `impersonate`·`stealthy_headers` **두 인자를 함께** 꺼서 이 경계를 실제로 성립시킨다. **하나만 끄면 불일치 지문이 되어 오히려 악화된다.**
+
+### ■ 이음매 — 통지 게이트 ■
+
+**사다리 A 를 소진했고 다음이 사다리 B 라면, 자동으로 넘어가지 않는다.** 사용자에게 한 번 알린다:
+
+```
+이 사이트는 자동 접근을 차단하고 있습니다 (<감지된 유형>).
+다음 단계는 그 차단을 우회하는 것입니다.
+ · 수집 권한이나 정당한 사유가 있는지 확인하세요
+ · 참고: 공식 API·데이터 개방·제휴 경로나 대체 데이터원이 있으면 그쪽이 낫습니다
+계속하시겠습니까?  [진행 / 중단]
+```
+
+- **'진행' 이면 그대로 사다리 B 로 간다.** 근거를 묻지도 검증하지도 않는다.
+- **통지는 이음매를 넘을 때 도메인당 한 번이다.** 4→5→6 으로 더 올라가도 다시 묻지 않는다.
+- 선택 사실과 시각을 프로필 `consent` 블록에 남긴다 (Step 5-A). 이게 없으면 프로필 저장이 거부된다.
+- **이미 `consent` 기록이 있는 프로필이면 통지하지 않는다.** 그 기록 자체가 이 사용자가 이 도메인에서 한 번 통지받고 진행을 골랐다는 증거다(sticky). 프로필이 있어도 `consent`가 없다면(예: 사다리 A로만 수집돼 오다가 이번에 처음 사이트가 막은 경우) 이번이 최초로 이음매를 넘는 것이므로 그대로 통지한다.
+- **CAPTCHA 도 같은 층위다** — 자동으로 풀지 않는 것은 그대로지만, 통지 없이 조용히 중단하지도 않는다. 다른 경로가 있는지 함께 제시한다.
+
+### 사다리 B — 상대가 막고 있다 (통지 후 진행)
+
+| 칸 | 무엇이 걸렸나 | 무엇을 하나 | 도구 |
+|---|---|---|---|
+| **4** 지문 정렬 | **목소리** — "크롬입니다" 라고 말했는데 TLS 협상 지문이 파이썬 | 협상 지문을 실제 크롬과 동일하게. **브라우저 안 띄움** | `curl_cffi` 그리드 |
+| **5** 스텔스 브라우저 | **걸음걸이** — `navigator.webdriver`, 폰트·캔버스 지문, 직선 마우스 | 브라우저를 띄우되 자동화 흔적을 지움 | `StealthyFetcher` |
+| **6** 실제 크롬 | 위 전부가 안 통함 | 흉내가 아니라 **실제 사용자 프로필 Chrome** 을 띄우고 그 안에서 fetch | `chrome_cdp` |
+
+> **B 는 순차가 아니다.** 고급 WAF 는 4·5 단이 원리적으로 통하지 않아 **바로 6 단**으로 간다. WAF capability 라우팅은 `references/antibot-strategies.md` 참조. **단 그 라우팅도 통지 이후에 일어난다.**
+
+### 증상 → 칸 판별표
+
+| 증상 | 무슨 뜻 | 칸 |
+|---|---|---|
+| `Ctrl+U` 소스에 글자 있음 | 종이에 적혀 있다 | 1 |
+| 소스엔 없는데 Network 에 JSON | 전화번호가 있다 | 2 |
+| 내부 주소 호출 시 401·토큰 필요 | 전화는 브라우저만 건다 | 3 |
+| 헤더 다 맞췄는데 403 | **지문**에서 걸렸다 | **4** ⚠ |
+| 챌린지 페이지 / "봇 감지" | **행동**에서 걸렸다 | **5** ⚠ |
+| `_abck` 쿠키 · `Access Denied` | 고급 WAF | **6** ⚠ |
+
+⚠ = 통지 대상. 이 표의 위 셋과 아래 셋은 성격이 다르다 —
+**위 셋은 내가 안 갖춘 것(고쳐라), 아래 셋은 상대가 안 주는 것(멈추고 물어라).**
+
+### 오르내리는 규칙
+
+```
+올리려면:   ① 아래 칸이 실패했다는 '확인' (추측 아님)
+            ② 4단 이상이면 사용자의 한 번의 진행 선택 (이미 `consent` 기록이 있는 프로필이면 면제)
+
+내려오기:   6단으로 성공했어도 영구 자격이 아니다.
+            사이트 구조가 바뀌면 다시 1단부터 판별한다.
+```
 
 ### 각 전략의 코드 패턴
 
-> 📖 각 전략의 상세 코드 템플릿은 `references/fetcher-patterns.md`를 참조한다.
+> 📖 상세 코드 템플릿은 `references/fetcher-patterns.md` 를 참조한다.
 
-| 전략 | Fetcher | 적용 사이트 예시 | 참조 섹션 |
-|------|---------|-----------------|----------|
-| **(A) API 직접** | FetcherSession | wanted.co.kr, 공개 API 사이트 | fetcher-patterns.md § API 수집 |
-| **(B-1) 정적 HTML** | Fetcher | books.toscrape.com, 정적 게시판 | fetcher-patterns.md § 정적 HTML |
-| **(B-2) JS 렌더링** | DynamicFetcher | kurly.com (Next.js CSR) | fetcher-patterns.md § 동적 사이트 |
-| **(C) Cloudflare** | StealthyFetcher | CF 보호 사이트 | antibot-strategies.md § Cloudflare |
-| **(D) Akamai/WAF** | Chrome CDP | coupang.com | antibot-strategies.md § Akamai |
-| **(E) SPA 세션** | Playwright 인터셉트 | g2b.go.kr (WebSquare) | antibot-strategies.md § SPA 세션 |
-| **(F) 경량 그리드** | curl_cffi 그리드 | DataDome/PerimeterX/단순 403 (Akamai 제외) | antibot-strategies.md § curl_cffi 그리드 |
+| 칸 | 전략 | 도구 | 참조 섹션 |
+|---|------|---------|----------|
+| 0·2 | API 직접 | `plain_session` | fetcher-patterns.md § API 수집 |
+| 1 | 정적 HTML | `plain_get` | fetcher-patterns.md § 정적 HTML |
+| 3 | JS 렌더링 | `DynamicFetcher` | fetcher-patterns.md § 동적 사이트 |
+| 3 | SPA 세션 인터셉트 | Playwright 인터셉트 | antibot-strategies.md § SPA 세션 |
+| 4 ⚠ | 경량 그리드 | `curl_cffi` 그리드 | antibot-strategies.md § curl_cffi 그리드 |
+| 5 ⚠ | 스텔스 | `StealthyFetcher` | antibot-strategies.md § Cloudflare |
+| 6 ⚠ | 실제 크롬 | Chrome CDP | antibot-strategies.md § 고급 WAF |
 
 ### 안티봇 감지 시그널
 
-> 📖 상세 감지 로직과 대응 전략은 `references/antibot-strategies.md`를 참조한다.
+> 📖 상세 감지 로직은 `references/antibot-strategies.md` 참조.
 
-**Akamai**: `_abck`/`bm_sz`/`ak_bmsc` 쿠키, `Access Denied` + `errors.edgesuite.net`, 알려진 사이트 (coupang.com)
-**Cloudflare**: `cf_clearance` 쿠키, Cloudflare 챌린지 페이지
-**SPA 세션 보호**: 브라우저에서는 정상 작동하나 API 직접 호출 시 403 (ErrorCode -801 등)
+**Akamai 계열**: `_abck`/`bm_sz`/`ak_bmsc` 쿠키, `Access Denied` + `errors.edgesuite.net`
+**Cloudflare**: `cf_clearance` 쿠키, 챌린지 페이지
+**SPA 세션 보호**: 브라우저에서는 정상인데 API 직접 호출 시 403 (ErrorCode -801 등) — 이건 3단이지 우회 대상이 아니다
 
 ### Step 3.5: API 필드 매핑 검증
 
@@ -274,7 +357,7 @@ Step 3에서 결정한 전략에 맞는 코드 패턴을 `references/fetcher-pat
 2. **consecutive_errors 추적** — 연속 5회 실패 시에만 최종 중단
 3. **RateLimiter** — `scripts/utils.py`의 RateLimiter 사용
 4. **부분 데이터 저장** — 100건마다 raw_data.json에 중간 저장
-5. **FETCHER_CHAIN 에스컬레이션** — 연속 2회 실패 시 상위 Fetcher로 전환 (Akamai/SPA 세션 제외)
+5. **FETCHER_CHAIN 에스컬레이션** — 연속 2회 실패 시 상위 티어로 전환. **체인은 사다리 A(3단)에서 끝난다** — 사다리 B 진입은 Step 3 의 통지 게이트를 거친다
 
 > **except 블록에서 반드시 `continue`** — 절대 `break`로 중단하지 않는다.
 
@@ -322,14 +405,16 @@ verdict = detect_softblock(
 )
 if verdict["blocked"]:
     logger.error(f"소프트블록 감지 — {verdict['verdict']}: {verdict['signals']}")
-    # → 수집 강행 금지. Step 3 안티봇 분기로 에스컬레이션:
-    #   challenge/blocked + Akamai 시그널 → Chrome CDP
-    #   그 외 → curl_cffi 그리드 / StealthyFetcher / DynamicFetcher 상위 단계
+    #   무엇이 감지됐든, 다음 단계가 사다리 B(4단 이상)라면 **먼저 Step 3 의 이음매 통지 게이트를 거친다.**
+    #   소프트블록 감지는 "상대가 나를 식별하고 거절했다" 는 신호다 — 즉 이음매에 도달했다는 뜻이지,
+    #   이음매를 건너뛰어도 된다는 뜻이 아니다.
 ```
 
 **게이트 규칙:**
-1. `blocked=True`면 **수집을 강행하지 않는다.** 상위 Fetcher로 에스컬레이션하거나(antibot-strategies.md), 그래도 안 뚫리면 사용자에게 보고 후 중단.
-2. `verdict`가 `challenge`/`blocked`이고 Akamai 시그널(`_abck ~-1~` 등)이 같이 잡히면 **즉시 Chrome CDP**로 점프 (StealthyFetcher 헛고생 금지).
+1. `blocked=True`면 **수집을 강행하지 않는다.** 에스컬레이션 여부는 규칙 2(이음매 통지 게이트)를 따른다 — 게이트를 통과해 상위 단계로 가도 안 뚫리면 사용자에게 보고 후 중단.
+2. 소프트블록으로 판정되면 **수집을 멈추고 Step 3 의 이음매 통지 게이트로 돌아간다.**
+   감지된 유형(Akamai 시그널 / 챌린지 / 빈 셸)은 게이트 문구의 `<감지된 유형>` 에 넣는다.
+   사용자가 '진행' 을 고른 뒤에야 WAF capability 라우팅(4·5 를 건너뛸지 등)을 적용한다.
 3. `weak_ok`(셀렉터 미검증 통과)는 통과시키되, 수집 후 필드 채움률이 비정상적으로 낮으면 이 게이트를 의심한다.
 
 ### 일반 검증
@@ -345,6 +430,29 @@ if verdict["blocked"]:
 
 > 📖 수집 실패 시 원인 진단은 `references/troubleshooting.md`를 참조한다.
 
+### 값이 그럴듯한가 (필수)
+
+건수와 null 비율만 보면 **광고를 상품으로 가져온 경우를 통과시킨다.** 자가치유 셀렉터는
+"못 찾겠다" 고 말하지 않고 늘 무언가를 반환하기 때문이다.
+
+```python
+from utils import validate_values
+
+issues = validate_values(results, {
+    "상품명":   {"type": "str", "required": True, "max_empty_ratio": 0.1},
+    "가격":     {"type": "int", "required": True, "min": 1, "max": 100_000_000},
+    "카테고리": {"type": "str", "required": True, "allow_uniform": True},  # 한 페이지가 단일 카테고리일 수 있다 — 균일해도 정상
+})
+if issues:
+    logger.warning("값 검증 경고:\n" + "\n".join(issues))
+```
+
+- `allow_uniform: True`는 그 필드의 **중복률 검사만** 면제한다 — 카테고리·플래그·정액
+  배송비처럼 전부 같은 값이어도 정상인 필드에 쓴다. 명시적으로 걸지 않은 필드는 10건 이상
+  전부 동일하면 그대로 경고한다(셀렉터가 광고·머리글 등 고정 요소를 잡았을 가능성).
+- `adaptive=True` 로 요소를 **재탐색한 행**에는 플래그 컬럼을 남겨 엑셀에서 구분되게 한다.
+- 문제가 있으면 사용자에게 그대로 보고한다 — 조용히 진행하지 않는다.
+
 ---
 
 ## Step 5-A: 도메인 프로필 저장 (필수 게이트)
@@ -358,24 +466,31 @@ from datetime import date
 profile_mgr = DomainProfile()  # base_dir=./fingerprints
 profile_mgr.save(domain, {
     "domain": domain,
-    "fetcher_type": "<FetcherSession|StealthyFetcher|DynamicFetcher|chrome_cdp|API_SESSION>",
+    "fetcher_type": "<yt-dlp|RSS|oEmbed|Jina|Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체. 앞 4개는 Step 1-B Phase 0 공인 우회로
     "antibot_type": "<none|cloudflare|akamai|naver_antibot|other>",
-    "antibot_strategy": "<none|stealthy|chrome_cdp>",
+    "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
     "site_type": "<static|csr|api|spa_session|akamai>",
     "selectors": {<필드: 셀렉터>},
     "pagination": {<config — type/param/limit 등>},
     "api_endpoints": [{<url, method, params, field_mapping>}],
     "notes": "<재수집 시 결정적인 한두 줄: 인증 필요 여부, 페이지네이션 트릭, 봇 차단 회피 포인트>",
     "last_used": str(date.today()),
+    # 사다리 B(4단 이상)로 수집했을 때만. **실제로 통지했고 사용자가 '진행' 을 고른 경우에만 적는다** —
+    # 그 일이 없었으면 이 블록을 적지 않는다. 적으면 기록이 거짓이 되고, 이 기록의 유일한 쓸모가 사라진다.
+    # 근거가 아니라 선택을 적는다. 이미 `consent` 기록이 있는 프로필이면 자동으로 이어지므로(sticky) 생략해도 된다.
+    "consent": {"notified_at": "<통지한 실제 시각 ISO8601>", "choice": "proceed"},
 })
 ```
 
 ### 게이트 규칙
 
-1. **`notes` 필드는 비워두지 않는다.** 다음 사람(미래의 나 포함)이 정찰 안 하고도 바로 수집할 수 있는 한두 줄의 결정적 정보를 적는다 — "API key는 OK, job_group_id=518이 일반 목록", "Akamai 보호라 Chrome CDP 필수", "review API는 POST에 originProductNo 필요" 같은 형식.
+1. **`notes` 필드는 비워두지 않는다.** 다음 사람(미래의 나 포함)이 정찰 안 하고도 바로 수집할 수 있는 한두 줄의 결정적 정보를 적는다 — "API key는 OK, job_group_id=518이 일반 목록", "리스트는 SSR HTML, 상세는 XHR JSON — 2단으로 충분", "review API는 POST에 originProductNo 필요" 같은 형식.
 2. **인증 토큰/쿠키/내부 API key는 profile.json에 박지 않는다.** `.gitignore`가 `cookies*.json`/`auth*.json`/`*token*.json`/`*secret*`은 차단하지만 profile.json은 commit 대상이므로 평문 자격증명이 새지 않게 분리한다.
 3. **fetcher_type / antibot_strategy 둘은 무조건 채운다.** 다음 실행에서 Step 1-A가 이 두 값만 보고 fetcher chain을 건너뛰므로, 빈 값이면 게이트 기능을 못 한다.
-4. **이미 profile이 있으면 `last_used`만 갱신하지 말고**, 이번 수집에서 새로 알아낸 게 있으면 `notes`와 endpoint/selector를 누적/수정한다.
+4. **사다리 B 로 수집했으면 `antibot_strategy` 에 그 사실을 적는다.** `none` 으로 적으면 분류기가 탐색 단계로 오판해 그 레시피를 배포 대상에 넣고 `consent` 기록도 지운다. 실제로 쓴 것을 적을 것.
+   **`Spider` 는 티어가 아니라 래퍼다** — 밑에서 실제로 쓴 티어를 적는다.
+5. 사다리 B 프로필은 `consent` 없이는 저장이 거부된다(`ConsentRequired`). 심사가 아니라 기록이다. 인식되지 않는 `fetcher_type`/`antibot_strategy` 값도 같은 예외로 저장을 막는다 — 이때는 통지를 기록할 게 아니라 값을 문서화된 것으로 고쳐야 한다.
+6. **이미 profile이 있으면 `last_used`만 갱신하지 말고**, 이번 수집에서 새로 알아낸 게 있으면 `notes`와 endpoint/selector를 누적/수정한다.
 
 저장이 끝나면 Step 6으로 진행. profile.json 저장 실패 시 수집 결과는 살아있어도 **"파이프라인 미완료"**로 보고하고 사용자에게 원인을 알린다 (디스크 권한, 스키마 누락 등).
 
