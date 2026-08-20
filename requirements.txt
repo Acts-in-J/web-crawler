@@ -14,7 +14,17 @@
 #       [fetchers] extra 로 들어오므로 아래처럼 extra 를 반드시 포함해야 한다.
 #       (검증: python scripts/preflight.py)
 
-scrapling[fetchers]>=0.4.8   # 수집 엔진 + fetcher 런타임 일괄(click, curl_cffi, playwright, patchright, browserforge, msgspec, anyio, apify-fingerprint-datapoints)
-protego>=0.3.0               # robots.txt 파서 (Step 5 robots 확인 등 런타임에서 사용)
+# 수집 엔진 + fetcher 런타임 일괄(click, curl_cffi, playwright, patchright, browserforge,
+# msgspec, anyio, apify-fingerprint-datapoints). pre-1.0 · v0.3 breaking 전력 → 상한 필수.
+scrapling[fetchers]>=0.4.8,<0.5
+
+# 아래 셋은 scrapling[fetchers] 의 전이 의존이지만, 우리 코드가 '직접' import 하므로
+# 직접 선언해 버전 통제권을 가져온다. 하한은 2026-08-20 실측 설치본 기준.
+# ⚠ playwright 와 patchright 는 버전이 함께 움직여야 한다(둘 다 1.62.x) — 한쪽만 크게 올리지 말 것.
+playwright>=1.62             # scripts/chrome_cdp.py, scripts/preflight.py, 생성 crawl_script.py(SPA 인터셉트)
+curl_cffi>=0.16              # 사다리 4단 경량 그리드
+patchright>=1.62             # StealthyFetcher 런타임 (scripts/bootstrap.py 가 설치 검증)
+
+protego>=0.3.0               # robots.txt 파서 — scripts/utils.py check_robots() 에서 사용
 openpyxl>=3.1                # 엑셀(.xlsx) 출력
 pytest>=8.0                  # 테스트 실행 (개발용)
