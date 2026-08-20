@@ -116,17 +116,36 @@ _PHONE_PATTERN = re.compile(r'(\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4})')
 
 # 개인을 가리키는 컬럼명. 값이 아니라 '스키마' 를 보는 게 이 경우 더 정확하다 —
 # "홍길동" 이라는 값만 봐서는 사람 이름인지 상품명인지 알 수 없지만, 컬럼명이 '작성자' 면 확실하다.
+#
+# `수신자`/`담당자`/`인수자`/`접수자`/`낙찰자` 는 모두 사람을 직접 가리키는 역할 명사라 명시
+# 추가했다. `자`로 끝난다고 일괄 규칙을 만들지는 않는다 — `숫자`/`이자`/`과자`도 `자`로 끝나지만
+# 사람이 아니다. 리터럴 나열만 허용한다.
+#
+# `user_num` 은 `userid`/`user_id` 와 같은 문제다 — 그 사람에게 매겨진 식별번호. 다만 바깥
+# `_PII_AGGREGATE_SUFFIXES` 에서 `num` 을 뺀 것과 별개로, 애초에 `user` 단독은 힌트에 없어서
+# (`user_agent`/`concurrent_users` 같은 무관한 컬럼까지 잡을 위험) `user_num` 을 리터럴로 추가했다.
 _PII_COLUMN_HINTS = (
     "작성자", "이름", "성명", "닉네임", "별명", "아이디", "회원", "구매자", "리뷰어",
-    "author", "writer", "nickname", "username", "user_name", "userid", "user_id",
+    "수신자", "담당자", "인수자", "접수자", "낙찰자",
+    "author", "writer", "nickname", "username", "user_name", "userid", "user_id", "user_num",
     "reviewer", "member", "buyer", "customer", "profile",
 )
 
 # 집계·파생 컬럼은 사람이 아니라 사람에 대한 '수치' 다.
 # `작성자` 는 개인이지만 `작성자수` 는 개인이 아니다 — 어근이 같아도 다른 것이다.
 # 이 구분을 안 하면 경고가 `회원수` 같은 데서 울리고, 그러면 진짜 경고까지 함께 무시된다.
+#
+# `num` 은 여기 없다 — 뺐다. "count of" 로 읽힐 걸 기대하고 넣었지만, 실제 데이터에서
+# `buyer_num`/`member_num` 은 "인원 수" 가 아니라 "그 사람에게 매겨진 식별번호"
+# (구매자번호/회원번호) 다. 즉 집계가 아니라 그 자체로 식별자 — 오히려 `num` 이 들어간
+# 컬럼일수록 더 의심해야 한다. 반대로 한글 쪽 `수` 는 "받는이" 를 뜻하는 `수신자` 처럼
+# 사람을 가리키는 데도 쓰이지만, endswith 이므로 `수신자` 는 걸리지 않는다(끝이 '자').
+#
+# `score`/`rate`/`ratio`/`avg`/`sum`/`policy` 는 남긴다 — `customer_score` 처럼 개인 단위로
+# 매겨지더라도, 그 값 자체가 신원을 드러내지 않는 파생 수치(순위·비율·정책 설명)라는 점에서
+# `count`/`total`/`cnt` 와 같은 축에 있다. `num`(식별번호)과는 다른 문제다.
 _PII_AGGREGATE_SUFFIXES = (
-    "수", "count", "cnt", "num", "total", "score", "policy", "rate", "ratio", "avg", "sum", "id_policy",
+    "수", "count", "cnt", "total", "score", "policy", "rate", "ratio", "avg", "sum", "id_policy",
 )
 
 

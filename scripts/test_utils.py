@@ -331,6 +331,43 @@ def test_pii_flags_team_members_as_group_of_people():
     assert warnings, "team_members 는 사람 목록을 가리키므로 감지되어야 합니다"
 
 
+# ── P2-2 픽스 2: 식별번호(`_num`)가 집계로 오인돼 빠지던 문제 ──
+@pytest.mark.parametrize("column", [
+    "buyer_num", "member_num", "reviewer_num", "user_num", "회원번호", "구매자번호",
+])
+def test_pii_flags_identifying_number_columns(column):
+    """`num` 은 "인원 수" 가 아니라 "그 사람에게 매겨진 식별번호" 로 읽힐 수 있다 —
+    `buyer_num`/`회원번호` 는 집계가 아니라 그 자체로 식별자이므로 감지되어야 한다."""
+    warnings = detect_pii([{column: "x"}])
+    assert warnings, f"식별번호 컬럼 '{column}' 을 감지하지 못했습니다"
+
+
+@pytest.mark.parametrize("column", [
+    "buyer_count", "member_count", "회원수", "구매자수",
+])
+def test_pii_still_ignores_real_aggregate_columns(column):
+    """`_num` 회귀 수정이 진짜 집계 컬럼(`_count`/`수`)까지 다시 걸리게 하면 안 된다."""
+    assert detect_pii([{column: "x"}]) == []
+
+
+# ── P2-2 픽스 2: 사람을 가리키는 역할 명사 추가 (아이디는 이미 있었음) ──
+@pytest.mark.parametrize("column", [
+    "수신자", "담당자", "인수자", "접수자", "낙찰자",
+])
+def test_pii_detects_role_noun_columns(column):
+    """작성자/구매자 외에도 사람을 직접 가리키는 역할 명사는 감지해야 한다."""
+    warnings = detect_pii([{column: "x"}])
+    assert warnings, f"역할 명사 컬럼 '{column}' 을 감지하지 못했습니다"
+
+
+@pytest.mark.parametrize("column", [
+    "숫자", "이자", "과자",
+])
+def test_pii_does_not_flag_unrelated_ja_ending_words(column):
+    """'자' 로 끝나는 단어를 일괄로 잡지 않는다 — 리터럴 나열만 허용한다."""
+    assert detect_pii([{column: "x"}]) == []
+
+
 # ── P2-3: 부담 상한 ──
 from utils import BudgetExceeded, RateLimiter
 
