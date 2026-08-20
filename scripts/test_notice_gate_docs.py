@@ -3,6 +3,7 @@
 protego 가 requirements 에 있으면서 어디서도 import 되지 않은 채 몇 달을 보낸 전례가 있다.
 문서에만 적힌 규칙은 반드시 흐트러진다.
 """
+import re
 from pathlib import Path
 
 import pytest
@@ -196,3 +197,115 @@ def test_recon_failure_returns_to_the_gate():
     section = _recon_rules_section()
     assert "이음매 통지 게이트로 돌아간다" in section
     assert "정찰 단계에서도 사다리 B 진입은 사용자 확인을 거친다" in section
+
+
+# ── 법적 위험: 경고하되 판단은 사용자에게 ────────────────────────────────────
+#
+# 한때 안전 규칙 목록에 "명백히 위법한 요청은 거절" 이 있었다 — 에이전트가 사용자의 법적
+# 지위를 스스로 심판하는 규칙인데, 같은 저장소의 ACCEPTABLE_USE.md 는 "저자는 그 판단을 할
+# 위치에 있지 않다" 고 이미 말하고 있었다. 그 모순을 없앤 것이 이 검사가 지키는 상태다.
+#
+# 이 변경은 되돌아오기 쉽다 — '거절' 이 더 안전해 보이기 때문이다. 그래서 두 방향을 함께
+# 건다: 위험 범주가 **사라지는 것**(경고할 대상을 잃음)도, 범주 옆에 **거절이 되살아나는
+# 것**(심판으로 회귀)도 막는다.
+_RISK_CATEGORY_WORDS = ("저작권", "개인정보 대량", "재배포")
+
+_REFUSAL_WORDS = ("거절", "거부", "받지 않", "수행하지 않", "진행하지 않")
+
+
+def _logical_blocks(section: str) -> list[str]:
+    """접혀 있는 목록 항목·문단을 한 덩어리로 되돌린다.
+
+    이 문서들의 규칙 한 줄은 실제로는 여러 줄에 걸쳐 접혀 있다. 줄 단위로 보면 범주 이름과
+    거절 문구가 서로 다른 줄에 떨어져 검사를 그냥 통과해버린다 — 실제로 변이 검증에서
+    ACCEPTABLE_USE.md 가 그 모양이었다. 빈 줄·목록 마커·헤딩을 경계로 삼아 논리 단위로
+    다시 묶는다.
+    """
+    blocks: list[str] = []
+    current: list[str] = []
+    for line in section.splitlines():
+        boundary = (
+            not line.strip()
+            or re.match(r"\s*(?:[-*+]|\d+\.)\s", line) is not None
+            or line.startswith("#")
+        )
+        if boundary and current:
+            blocks.append(" ".join(current))
+            current = []
+        if line.strip():
+            current.append(line.strip())
+    if current:
+        blocks.append(" ".join(current))
+    return blocks
+
+SAFETY_RULE_SECTIONS = [
+    pytest.param(
+        README, "## 안전 규칙 (에이전트가 항상 지킴)", "## .gitignore 정책",
+        "진행 여부는 사용자가 정합니다", id="README.md",
+    ),
+    pytest.param(
+        CLAUDE_MD, "## 범위 / 운영 안전 규칙", "## 핵심 도구",
+        "진행 여부는 사용자가 정한다", id="CLAUDE.md",
+    ),
+    pytest.param(
+        AGENTS_MD, "## 안전 — 하드룰 (위반 금지)", "## 빠른 참조",
+        "진행 여부는 사용자가 정한다", id="AGENTS.md",
+    ),
+    pytest.param(
+        ACCEPTABLE_USE, "## 이 도구가 하지 않는 일", "## 사용자의 책임",
+        "진행 여부는 사용자가 정합니다", id="ACCEPTABLE_USE.md",
+    ),
+]
+
+
+@pytest.mark.parametrize("path,start,end,decision_phrase", SAFETY_RULE_SECTIONS)
+def test_safety_rules_warn_about_legal_risk_without_refusing(path, start, end, decision_phrase):
+    """안전 규칙 절 — 위험 범주는 이름이 남아 있고, 판단은 사용자 몫이어야 한다.
+
+    문서 전체가 아니라 안전 규칙 절만 잘라서 본다 — '거절' 은 이 저장소에서 정당한 다른
+    뜻으로도 쓰인다("상대가 나를 식별하고 거절했다"). 문서 전체 검사는 그런 문장에 걸리거나,
+    반대로 다른 절이 그린을 유지시켜 이 절의 회귀를 가려버린다.
+    """
+    section = _section(path, start, end)
+
+    # 되돌아오는 쪽부터 본다 — 진단이 가장 구체적이라 실패 메시지가 바로 원인을 가리킨다.
+    for block in _logical_blocks(section):
+        matched_refusal = next((w for w in _REFUSAL_WORDS if w in block), None)
+        if matched_refusal is None:
+            continue
+        matched_category = next((w for w in _RISK_CATEGORY_WORDS if w in block), None)
+        assert matched_category is None, (
+            f"{path.name} 의 안전 규칙 절에서 '{matched_category}' 옆에 '{matched_refusal}' 가 "
+            f"돌아왔습니다:\n    {block}\n"
+            "에이전트가 사용자의 법적 지위를 스스로 심판하는 규칙입니다 — "
+            "ACCEPTABLE_USE.md 의 '사용자의 법적 권한 심사' 조항과 정면으로 어긋납니다. "
+            "위험은 알리고, 진행 여부는 사용자가 정합니다"
+        )
+
+    for word in _RISK_CATEGORY_WORDS:
+        assert word in section, (
+            f"{path.name} 의 안전 규칙 절에서 위험 범주 '{word}' 가 사라졌습니다 — "
+            "이 규칙의 값은 요청이 어떤 종류의 위험을 안고 있는지 알려주는 데 있습니다. "
+            "범주를 지우면 층위 재배치가 아니라 삭제가 됩니다"
+        )
+
+    assert decision_phrase in section, (
+        f"{path.name} 의 안전 규칙 절이 '{decision_phrase}' 라고 말하지 않습니다 — "
+        "경고 다음에 오는 것은 심사가 아니라 사용자의 선택입니다"
+    )
+
+
+def test_acceptable_use_does_not_speak_for_the_agent():
+    """문서가 도구의 동작을 정의하지만, 실행하는 에이전트를 대신 약속하지는 않는다.
+
+    "사용자가 고르면 그대로 진행한다" 는 이 저장소가 지킬 수 없는 약속이다 — 실행 주체는
+    자체 판단 기준을 가진 AI 에이전트다. 이 브랜치가 48 개 커밋에 걸쳐 걷어낸 것이 정확히
+    그 결함 유형(작동하지 않는 메커니즘을 주장하는 문서)이라, 그 정직성 문구가 조용히
+    사라지면 같은 결함이 되돌아온다.
+    """
+    section = _section(ACCEPTABLE_USE, "## 이 도구가 하는 일", "## 이 도구가 하지 않는 일")
+    assert "자체 판단 기준" in section, (
+        "ACCEPTABLE_USE.md 상단에서 '실행하는 에이전트는 자체 판단 기준을 갖는다' 는 문구가 "
+        "사라졌습니다 — 이 문서가 지킬 수 없는 약속을 하게 됩니다"
+    )
+    assert "에이전트가 멈추는 경우가 있을 수 있습니다" in section
