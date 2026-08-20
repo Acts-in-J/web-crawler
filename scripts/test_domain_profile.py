@@ -35,14 +35,13 @@ def test_profile_exists(tmp_path):
 def test_distribution_declaration_survives_resave(tmp_path):
     """Step 5-A 는 매번 새 dict 를 넘긴다 — 선언이 거기서 지워지면 안 된다."""
     from domain_profile import DomainProfile
-    consent = {"notified_at": "2026-08-20T00:00:00+09:00", "choice": "proceed"}
     mgr = DomainProfile(base_dir=str(tmp_path))
     mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Playwright",
                              "distribution": "local", "distribution_reason": "robots",
-                             "consent": consent})
-    # consent 는 sticky 가 아니다 — local 로 남는 이번 저장에도 다시 넘겨야 한다.
-    mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Playwright",
-                             "consent": consent})
+                             "consent": {"notified_at": "2026-08-20T00:00:00+09:00",
+                                         "choice": "proceed"}})
+    # consent 도 sticky 다 — 두 번째 저장은 다시 넘기지 않아도 앞선 결정을 물려받는다.
+    mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Playwright"})
     reloaded = mgr.load("example.com")
     assert reloaded["distribution"] == "local"
     assert reloaded["distribution_reason"] == "robots"
@@ -185,18 +184,23 @@ def test_consent_does_not_require_a_justification(tmp_path):
     })   # authorization_basis 없이도 저장된다
 
 
-def test_consent_required_when_sticky_distribution_carries_local(tmp_path):
-    """distribution:"local" 선언이 sticky 로만 이어져도 consent 게이트는 여전히 걸린다."""
+def test_consent_survives_resave(tmp_path):
+    """이미 내린 결정을 매 수집마다 다시 묻지 않는다 — 프로필이 그 기록을 지닌다."""
     mgr = DomainProfile(base_dir=str(tmp_path))
     mgr.save("example.com", {
-        "domain": "example.com",
-        "fetcher_type": "Fetcher",
-        "distribution": "local",
-        "distribution_reason": "robots.txt",
-        "consent": {"notified_at": "2026-08-20T14:30:00+09:00", "choice": "proceed"},
+        "domain": "example.com", "fetcher_type": "chrome_cdp",
+        "consent": {"notified_at": "2026-08-20T00:00:00+09:00", "choice": "proceed"},
     })
+    mgr.save("example.com", {"domain": "example.com", "fetcher_type": "chrome_cdp"})
+    assert mgr.load("example.com")["consent"]["choice"] == "proceed"
+
+
+def test_first_escalation_still_requires_consent(tmp_path):
+    """게이트는 여전히 발화한다 — 프로필이 없는 도메인에는 상속할 기록이 없다."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
     with pytest.raises(ConsentRequired):
-        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Fetcher"})
+        mgr.save("brand-new.example", {"domain": "brand-new.example",
+                                       "fetcher_type": "chrome_cdp"})
 
 
 # ── P2-4 백스톱 ②: 손상된 기존 프로필을 조용히 덮어쓰지 않는다 ──

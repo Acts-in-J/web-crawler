@@ -6,7 +6,7 @@
     "capability": "static|js_render|api|session",     # ★ SSOT — 능력 수준
     "distribution": "public|local",                    # 선택 — 없으면 policy 가 자동 판정
     "distribution_reason": "선언 사유",     # distribution 이 있을 때만 의미 있음
-    "consent": {"notified_at": "ISO8601", "choice": "proceed"},   # 사다리 B 프로필 필수
+    "consent": {"notified_at": "ISO8601", "choice": "proceed"},   # 사다리 B 프로필 필수, sticky
     "fetcher_type": "FetcherSession|Fetcher|StealthyFetcher|DynamicFetcher|chrome_cdp",  # 파생 — 현재 엔진에서의 구현체
     "antibot_type": "none|cloudflare|akamai|other",   # 봇 차단 유형
     "antibot_strategy": "none|stealthy|chrome_cdp",    # 대응 전략
@@ -34,11 +34,15 @@ ANTIBOT_STRATEGIES = {
 }
 
 # 호출자가 새 dict 를 만들어 넘겨도 살아남아야 하는 필드.
-# 배포 여부 선언(distribution/distribution_reason)과 capability(능력 SSOT)가 여기 없으면,
-# 다음 수집 한 번으로 그 결정이 조용히 지워진다. capability 는 fetcher_type 역추론 폴백이
-# 있어 지금은 손실이 감춰지지만, 그 폴백이 깨지는 순간(라이브러리가 클래스 이름을 또 바꾸는
-# 순간) 드러난다 — 폴백이 필요 없어질 때가 아니라 필요해질 때 사라지면 안 된다.
-STICKY_FIELDS = ("distribution", "distribution_reason", "capability")
+# - distribution/distribution_reason: 배포 여부 선언. 없으면 다음 수집 한 번으로 미배포
+#   결정이 조용히 지워진다.
+# - capability: 능력 SSOT. fetcher_type 역추론 폴백이 지금은 손실을 감추지만, 그 폴백이
+#   깨지는 순간(라이브러리가 클래스 이름을 또 바꾸는 순간) 드러난다 — 폴백이 필요 없어질
+#   때가 아니라 필요해질 때 사라지면 안 된다.
+# - consent: 이미 내린 통지·선택 기록. 그 도메인에 프로필이 존재한다는 사실 자체가 그
+#   사용자가 한 번 통지받고 진행을 골랐다는 뜻이다 — 매 수집마다 다시 묻지 않는다. (프로필이
+#   아예 없는 최초 진입에는 상속할 기록이 없으므로 게이트는 그대로 발화한다.)
+STICKY_FIELDS = ("distribution", "distribution_reason", "capability", "consent")
 
 
 class ConsentRequired(Exception):
@@ -49,6 +53,11 @@ class ConsentRequired(Exception):
 
     consent 는 '근거' 가 아니라 '선택' 을 기록한다 — 무엇을 정당화했는지가 아니라
     통지를 봤고 진행을 골랐다는 사실과 그 시각만 남긴다.
+
+    consent 는 sticky 필드다 — 한 번 기록되면 그 도메인의 다음 저장들이 다시 요구하지
+    않는다. 프로필이 이미 있다는 것 자체가 "이 사용자는 이미 통지받고 진행을 골랐다"
+    는 근거이기 때문이다. 그 도메인에 프로필이 아직 없는 최초 진입에는 상속할 기록이
+    없으므로, 게이트는 정확히 거기서만 발화한다.
     """
 
 
