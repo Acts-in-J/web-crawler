@@ -341,6 +341,36 @@ def test_unrecognized_tool_saves_once_consent_is_recorded(tmp_path):
     assert mgr.load("example.com")["fetcher_type"] == "fetch_via_grid"
 
 
+# ── ITEM 2 (fix round 3): 예외 메시지가 발화 원인에 맞는 처방을 준다 ──
+
+def test_genuine_rung_four_message_tells_you_to_record_consent(tmp_path):
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    with pytest.raises(ConsentRequired) as exc:
+        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "chrome_cdp"})
+    assert "consent" in str(exc.value)
+    assert "고쳐라" not in str(exc.value)   # 진짜 4단 이상은 값을 고치라고 하면 안 된다
+
+
+def test_unrecognized_value_message_tells_you_to_fix_the_value_not_consent(tmp_path):
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    with pytest.raises(ConsentRequired) as exc:
+        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "fetch_via_grid"})
+    message = str(exc.value)
+    assert "고쳐라" in message
+    # 진짜 4단 이상 메시지와 달리, 모르는 값 메시지는 "통지를 기록하라" 는 처방을 주지 않는다.
+    assert "그 선택과 통지한 실제" not in message
+
+
+def test_the_two_branches_produce_different_messages(tmp_path):
+    """같은 예외 타입이라도 발화 원인이 다르면 안내가 달라야 한다 — 헷갈리면 안 된다."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    with pytest.raises(ConsentRequired) as exc_genuine:
+        mgr.save("a.example", {"domain": "a.example", "fetcher_type": "chrome_cdp"})
+    with pytest.raises(ConsentRequired) as exc_unrecognized:
+        mgr.save("b.example", {"domain": "b.example", "fetcher_type": "fetch_via_grid"})
+    assert str(exc_genuine.value) != str(exc_unrecognized.value)
+
+
 def test_relaxations_still_hold_after_unrecognized_tool_check(tmp_path):
     """ITEM 1 백스톱을 추가해도 fix round 1 에서 열어둔 완화들은 그대로 유지된다."""
     from profile_policy import distribution as _distribution

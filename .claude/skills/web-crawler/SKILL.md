@@ -418,7 +418,7 @@ from datetime import date
 profile_mgr = DomainProfile()  # base_dir=./fingerprints
 profile_mgr.save(domain, {
     "domain": domain,
-    "fetcher_type": "<Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체
+    "fetcher_type": "<yt-dlp|RSS|oEmbed|Jina|Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체. 앞 4개는 Step 1-B Phase 0 공인 우회로
     "antibot_type": "<none|cloudflare|akamai|naver_antibot|other>",
     "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
     "site_type": "<static|csr|api|spa_session|akamai>",
@@ -440,7 +440,7 @@ profile_mgr.save(domain, {
 2. **인증 토큰/쿠키/내부 API key는 profile.json에 박지 않는다.** `.gitignore`가 `cookies*.json`/`auth*.json`/`*token*.json`/`*secret*`은 차단하지만 profile.json은 commit 대상이므로 평문 자격증명이 새지 않게 분리한다.
 3. **fetcher_type / antibot_strategy 둘은 무조건 채운다.** 다음 실행에서 Step 1-A가 이 두 값만 보고 fetcher chain을 건너뛰므로, 빈 값이면 게이트 기능을 못 한다.
 4. **사다리 B 로 수집했으면 `antibot_strategy` 에 그 사실을 적는다.** `none` 으로 적으면 분류기가 탐색 단계로 오판해 그 레시피를 배포 대상에 넣고 `consent` 기록도 지운다. 실제로 쓴 것을 적을 것.
-5. 사다리 B 프로필은 `consent` 없이는 저장이 거부된다(`ConsentRequired`). 심사가 아니라 기록이다.
+5. 사다리 B 프로필은 `consent` 없이는 저장이 거부된다(`ConsentRequired`). 심사가 아니라 기록이다. 인식되지 않는 `fetcher_type`/`antibot_strategy` 값도 같은 예외로 저장을 막는다 — 이때는 통지를 기록할 게 아니라 값을 문서화된 것으로 고쳐야 한다.
 6. **이미 profile이 있으면 `last_used`만 갱신하지 말고**, 이번 수집에서 새로 알아낸 게 있으면 `notes`와 endpoint/selector를 누적/수정한다.
 
 저장이 끝나면 Step 6으로 진행. profile.json 저장 실패 시 수집 결과는 살아있어도 **"파이프라인 미완료"**로 보고하고 사용자에게 원인을 알린다 (디스크 권한, 스키마 누락 등).

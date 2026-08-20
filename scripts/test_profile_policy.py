@@ -34,6 +34,40 @@ def test_naver_antibot_reaches_rung_six():
     assert distribution({"antibot_strategy": "naver_antibot"}) == "local"
 
 
+def test_stealthy_session_reaches_rung_five():
+    assert ladder_rung({"antibot_strategy": "stealthy_session"}) == 5
+
+
+# ── ITEM 1: 저장소 문서가 이미 쓰는 이름들을 사다리가 인식하는가 ──
+@pytest.mark.parametrize("value,expected_rung", [
+    ("DynamicSession", 3),           # SKILL.md 무한 스크롤 절
+    ("PlaywrightFetcher", 3),        # DynamicFetcher 의 옛 이름
+    ("playwright_sync_api", 3),      # 절대 규칙 1 예외 문구
+    ("Spider", 3),                   # CLAUDE.md 500건+ 권고
+])
+def test_documented_ladder_a_names_are_recognized(value, expected_rung):
+    assert ladder_rung({"fetcher_type": value}) == expected_rung
+
+
+@pytest.mark.parametrize("value", ["yt-dlp", "RSS", "oEmbed", "Jina"])
+def test_phase_zero_routes_are_rung_one_not_unknown(value):
+    """Phase 0 공인 우회로는 사다리 A 의 가장 낮은 칸이다 — 0(미상)이 아니라 1이어야 한다.
+
+    0을 썼다면 '모르겠다' 는 뜻이 되어 distribution() 이 default-deny 로 묶어버린다.
+    Phase 0 경로는 알려진 값이고 공개해도 되는 사다리 A 이므로 1이 맞다."""
+    assert ladder_rung({"fetcher_type": value}) == 1
+    assert distribution({"fetcher_type": value}) == "public"
+
+
+# ── ITEM 4(F2): 사다리 어휘와 capability 매핑이 어긋나면 infer_capability 가 조용히 None 을
+# 낸다 — 이 테스트가 있으면 새 사다리 값을 추가하면서 capability 매핑을 빠뜨리는 걸
+# 구조적으로 막는다(새 값이 하나라도 매핑을 빠뜨리면 이 테스트가 실패한다). ──
+def test_every_ladder_tool_has_a_capability_mapping():
+    from profile_policy import LADDER_A_TOOLS, LADDER_B_TOOLS, _FETCHER_TO_CAPABILITY
+    missing = (set(LADDER_A_TOOLS) | set(LADDER_B_TOOLS)) - set(_FETCHER_TO_CAPABILITY)
+    assert missing == set(), f"capability 매핑이 없는 사다리 도구: {missing}"
+
+
 # ── is_unrecognized_tool: ladder_rung 이 0 으로 뭉개는 두 경우를 구분한다 ──
 @pytest.mark.parametrize("profile", [
     # 한쪽 필드가 인식되는 rung-6 값이어도, 다른 필드가 모르는 값이면 ladder_rung 은 그

@@ -135,7 +135,13 @@ class DomainProfile:
         # 단, ladder_rung 은 '없는 값'(정보 없음)과 '있는데 모르는 값'(오타·신종·서술형)을
         # 둘 다 0 으로 뭉갠다 — 후자는 이음매를 건넜는지 판단 불가라는 뜻이지 안전하다는 뜻이
         # 아니다. is_unrecognized_tool 이 그 경우를 따로 잡아 게이트를 발화시킨다.
-        if ladder_rung(profile) >= 4 or is_unrecognized_tool(profile):
+        #
+        # 두 조건은 서로 배타적이다 — ladder_rung() 은 모르는 값을 하나라도 만나면 즉시 0을
+        # 반환하므로(다른 필드에서 이미 찾은 rung 도 버린다), rung>=4 가 성립했다는 것 자체가
+        # 모든 필드가 인식된 값이었다는 뜻이다. 그래서 아래에서 rung 하나만으로 두 트리거를
+        # 구분해 서로 다른 안내를 줄 수 있다 — 전자는 "진짜 4단 이상", 후자는 "판별 불가".
+        rung = ladder_rung(profile)
+        if rung >= 4 or is_unrecognized_tool(profile):
             consent = profile.get("consent")
             notified_at = consent.get("notified_at") if isinstance(consent, dict) else None
             consent_ok = (
@@ -144,15 +150,22 @@ class DomainProfile:
                 and _is_real_timestamp(notified_at)
             )
             if not consent_ok:
+                if rung >= 4:
+                    raise ConsentRequired(
+                        f"{domain}: 이 프로필은 자동 접근 차단을 넘어선 방법(사다리 B, 4단 이상)을 "
+                        "기록하고 있습니다. 사용자에게 실제로 한 번 통지하고, 그 선택과 통지한 실제 "
+                        "시각을 consent 블록에 남긴 뒤 저장하세요 — "
+                        '예: {"notified_at": "2026-08-20T14:30:00+09:00", "choice": "proceed"}. '
+                        "<ISO8601> 같은 자리표시자나 빈 값은 유효하지 않습니다. "
+                        "권한 근거를 적을 필요는 없습니다."
+                    )
                 raise ConsentRequired(
-                    f"{domain}: 이 프로필은 자동 접근 차단을 넘어선 방법(사다리 B, 4단 이상)을 "
-                    "기록하고 있거나, 어느 사다리 칸에도 해당하지 않는 fetcher_type/"
-                    "antibot_strategy 값을 쓰고 있어 이음매를 넘었는지 판별할 수 없습니다. "
-                    "사용자에게 실제로 한 번 통지하고, 그 선택과 통지한 실제 시각을 consent "
-                    "블록에 남긴 뒤 저장하세요 — "
-                    '예: {"notified_at": "2026-08-20T14:30:00+09:00", "choice": "proceed"}. '
-                    "<ISO8601> 같은 자리표시자나 빈 값은 유효하지 않습니다. "
-                    "권한 근거를 적을 필요는 없습니다."
+                    f"{domain}: fetcher_type/antibot_strategy 에 적힌 값이 어느 사다리 칸에도 "
+                    "해당하지 않아 분류기가 이음매를 넘었는지 판별할 수 없습니다(오타 또는 "
+                    "문서에 없는 신종 값일 수 있습니다). 문서화된 값 목록은 Step 5-A 저장 템플릿의 "
+                    "fetcher_type/antibot_strategy enum(SKILL.md)을 참조하세요. "
+                    "통지가 실제로 없었다면 consent 를 적지 말고 값을 고쳐라 — 이 오류는 심사가 "
+                    "아니라 분류기가 알아들을 수 있는 값을 요구하는 것입니다."
                 )
 
         if distribution(profile) != "local":

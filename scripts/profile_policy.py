@@ -31,9 +31,18 @@ LADDER_A_TOOLS = {
     "apisession": 2,
     "api": 2,
     "dynamicfetcher": 3,
+    "dynamicsession": 3,         # SKILL.md 무한 스크롤 절
     "playwright": 3,
+    "playwrightfetcher": 3,      # DynamicFetcher 의 옛 이름 — 옛 프로필/문서가 아직 쓴다
     "playwrightspaintercept": 3,
     "playwrightintercept": 3,
+    "playwrightsyncapi": 3,      # 절대 규칙 1 예외 문구
+    "spider": 3,                 # CLAUDE.md 500건+ 권고
+    # Phase 0 공인 우회로 — 제공자가 명시적으로 여는 경로다. 사다리 A 의 가장 낮은 칸으로 둔다.
+    "ytdlp": 1,
+    "rss": 1,
+    "oembed": 1,
+    "jina": 1,
     # authenticated_browser 는 의도적으로 넣지 않는다 — 우회는 아니지만 자격증명 수집은
     # ToS 노출이 가장 큰 범주다. 아래 WITHHELD_TOOLS 로 보내 명시 선언으로도 풀리지 않게 한다.
 }
@@ -45,6 +54,7 @@ LADDER_B_TOOLS = {
     "impersonate": 4,        # curl_cffi TLS 지문 정렬 — 사이트가 평문 호출을 거절했을 때의 대응
     "stealthy": 5,
     "stealthyfetcher": 5,
+    "stealthysession": 5,
     "cdp": 6,
     "chromecdp": 6,
     "naverantibot": 6,       # 네이버 계열 안티봇 — 실제 크롬 세션이 필요하다
@@ -213,14 +223,35 @@ _FETCHER_TO_CAPABILITY = {
     "apisession": "api",
     "api": "api",
     "dynamicfetcher": "js_render",
+    "dynamicsession": "js_render",
     "playwright": "session",
+    "playwrightfetcher": "js_render",     # DynamicFetcher 의 옛 이름 — dynamicfetcher 와 동일 취급
     "playwrightspaintercept": "session",
     "playwrightintercept": "session",
+    "playwrightsyncapi": "session",       # 절대 규칙 1 예외 — SPA 세션 인터셉트와 동일한 성격
     "authenticatedbrowser": "session",
     "cdp": "session",
     "chromecdp": "session",
+    "naverantibot": "session",
     "stealthy": "js_render",
     "stealthyfetcher": "js_render",
+    "stealthysession": "js_render",
+    # curl_cffi 계열은 브라우저를 띄우지 않는다 — 지문을 맞춘 직접 엔드포인트 호출이므로
+    # session/js_render 가 아니라 api 다.
+    "curlcffi": "api",
+    "curlcffigrid": "api",
+    "grid": "api",
+    "impersonate": "api",
+    # Phase 0 공인 우회로 — 제공자가 여는 구조화 데이터 엔드포인트를 직접 호출한다.
+    "ytdlp": "api",
+    "rss": "api",
+    "oembed": "api",
+    # jina 는 r.jina.ai 에 평문 GET 한 번으로 렌더링된 본문을 그대로 받는다 — 우리 쪽에서
+    # 보면 API 호출이 아니라 단일 정적 페이지 요청과 같은 모양이다.
+    "jina": "static",
+    # Spider 는 등급을 올리는 도구가 아니라 동시성 래퍼다 — fetcher-patterns.md 예제가
+    # AsyncFetcherSession 위에서 쓰는 것과 같이, 대량 API 호출을 감싸는 용도가 기본형이다.
+    "spider": "api",
 }
 
 
