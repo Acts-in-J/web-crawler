@@ -52,31 +52,112 @@ def test_captcha_rule_is_layered_with_waf():
     assert "CAPTCHA·WAF·봇 탐지는 법적으로 같은 보호조치" in text
 
 
+def _section(path: Path, start_heading: str, end_heading: str) -> str:
+    """path 에서 start_heading 부터 그 다음 end_heading 직전까지만 잘라 반환한다.
+
+    scripts/test_ladder_docs.py 의 `_fetcher_chain_block()` 관례를 따른다 — 문서 전체가
+    아니라 해당 라우팅 절만 봐야, 같은 문구가 다른 절에 살아남아 있다는 이유로 회귀를
+    놓치지 않는다. 헤딩이 안 보이면(문서 구조가 바뀌면) 조용히 빈 문자열을 돌려주는 대신
+    크게 실패한다 — 검사가 조용히 멈추는 것 자체가 드리프트다.
+    """
+    text = path.read_text(encoding="utf-8")
+    if start_heading not in text:
+        raise AssertionError(
+            f"{path.name} 에서 '{start_heading}' 섹션을 찾지 못했습니다 — 헤딩이 바뀌었다면 "
+            "이 테스트의 앵커도 같이 갱신해야 합니다"
+        )
+    after_start = text[text.index(start_heading) + len(start_heading):]
+    if end_heading not in after_start:
+        raise AssertionError(
+            f"{path.name} 에서 '{start_heading}' 다음의 '{end_heading}' 를 찾지 못했습니다 — "
+            "섹션 순서나 헤딩이 바뀌었다면 이 테스트의 앵커도 같이 갱신해야 합니다"
+        )
+    return after_start[: after_start.index(end_heading)]
+
+
+def _absolute_rule_zero_block() -> str:
+    """CLAUDE.md 의 '★ 절대 규칙 0' 절만 잘라 반환 (다음 '##' 절 직전까지)."""
+    return _section(
+        CLAUDE_MD,
+        "## ★ 절대 규칙 0: 도메인 히스토리 우선 (모든 수집의 시작)",
+        "## 범위 / 운영 안전 규칙",
+    )
+
+
+def _fetcher_decision_tree_section() -> str:
+    """CLAUDE.md 의 'Fetcher 선택 의사결정 트리' 절만 잘라 반환 (다음 '##' 절 직전까지)."""
+    return _section(
+        CLAUDE_MD,
+        "## Fetcher 선택 의사결정 트리",
+        "## Spider 활용 기준",
+    )
+
+
 def test_profile_reuse_notice_is_conditional_on_consent():
-    """프로필이 있다는 사실만으로 통지를 면제하면 안 된다.
+    """★ 절대 규칙 0 — 프로필이 있다는 사실만으로 통지를 면제하면 안 된다.
 
     한때 이 파일은 재사용 분기에 무조건 면제를 줬고, 그 문구가 literal `(통지 없음)` 이었다 —
-    즉 '통지' 라는 단어를 포함한 채로 게이트가 꺼져 있었다. 그래서 단어 존재 검사로는 못 잡는다.
-    consent 기록 유무를 조건으로 건다는 **구조**를 확인한다.
+    즉 '통지' 라는 단어를 포함한 채로 게이트가 꺼져 있었다(Task 11 S1). 이 블록은 에이전트가
+    수집을 시작할 때 가장 먼저 읽는 라우팅 지시라, "규칙은 문서 어딘가에 살아 있다"로는
+    부족하다 — **이 블록 안에서** consent 기록 유무를 조건으로 걸어야 한다. 다른 절(예:
+    Fetcher 선택 의사결정 트리)에 같은 문구가 남아 있다는 이유로 이 블록의 회귀를 놓치면 안
+    되므로, 문서 전체가 아니라 이 블록만 잘라서 검사한다.
     """
-    text = CLAUDE_MD.read_text(encoding="utf-8")
-    assert "기록이 없으면" in text, "프로필 재사용 면제가 consent 기록 유무를 조건으로 걸지 않는다"
-    assert "이번이 최초 통과" in text
+    block = _absolute_rule_zero_block()
+    assert "consent 기록이 있나" in block, (
+        "★ 절대 규칙 0 블록의 재사용 분기가 consent 기록 유무로 갈라지지 않습니다"
+    )
+    assert "프로필이 있다는 사실 자체는 게이트를 면제하지 않는다" in block
+
+
+def test_fetcher_decision_tree_notice_is_conditional_on_consent():
+    """Fetcher 선택 의사결정 트리 — Task 11 이 고친 두 번째 구조. 독립적으로 지킨다.
+
+    Step 0(프로필 재사용) 분기가 consent 기록 유무를 조건으로 거는지, ★ 절대 규칙 0 블록과는
+    별개로 이 절 자체에서 확인한다. 두 블록은 같은 규칙을 각자의 말로 반복해서 서술하므로,
+    한쪽이 통과한다고 다른 쪽의 회귀를 가려서는 안 된다.
+    """
+    section = _fetcher_decision_tree_section()
+    assert "기록이 없으면" in section, (
+        "Fetcher 선택 의사결정 트리의 Step 0 분기가 consent 기록 유무를 조건으로 걸지 않습니다"
+    )
+    assert "이번이 최초 통과" in section
+
+
+def _recon_rules_section() -> str:
+    """SKILL.md 의 '정찰 규칙' 절만 잘라 반환 (다음 '###' 절 직전까지)."""
+    return _section(SKILL, "### 정찰 규칙", "### 정찰 항목")
+
+
+def _softblock_gate_section() -> str:
+    """SKILL.md 의 'Step 5.0: 소프트블록 게이트' 절만 잘라 반환 (다음 '###' 절 직전까지)."""
+    return _section(
+        SKILL,
+        "### Step 5.0: 소프트블록 게이트 (최우선 — 다른 검증보다 먼저)",
+        "### 일반 검증",
+    )
 
 
 def test_softblock_returns_to_the_gate():
-    """차단 감지가 이음매를 건너뛰고 상위 티어로 직행하면 안 된다.
+    """Step 5.0 소프트블록 게이트 — 차단 감지가 이음매를 건너뛰고 직행하면 안 된다.
 
-    Task 10 이 이 파일에서 같은 모양의 경로를 세 곳 발견했다 — 감지 직후 라우팅을 미리 확정해
-    게이트로 돌아가지 않는 형태. 전부 '통지' 라는 단어는 근처에 있었다.
+    Task 10 이 이 파일에서 같은 모양의 경로를 여러 곳 발견했다 — 감지 직후 라우팅을 미리
+    확정해 게이트로 돌아가지 않는 형태. 전부 '통지' 라는 단어는 근처에 있었다. 이 문구는
+    SKILL.md 안에 이 절 말고도(정찰 규칙 절) 한 번 더 등장하므로, 문서 전체 검사로는 이
+    소프트블록 절만 회귀해도 다른 절이 그린을 유지시켜준다 — 이 절 하나로 좁혀서 본다.
     """
-    text = SKILL.read_text(encoding="utf-8")
-    assert "이음매 통지 게이트로 돌아간다" in text, (
-        "소프트블록/차단 감지 경로가 게이트로 복귀하라고 지시하지 않는다"
+    section = _softblock_gate_section()
+    assert "이음매 통지 게이트로 돌아간다" in section, (
+        "소프트블록 감지 경로가 게이트로 복귀하라고 지시하지 않습니다"
     )
 
 
 def test_recon_failure_returns_to_the_gate():
-    """정찰 단계 실패도 게이트를 거친다 — 한때 여기서 바로 CDP 로 갔다."""
-    text = SKILL.read_text(encoding="utf-8")
-    assert "정찰 단계에서도 사다리 B 진입은 사용자 확인을 거친다" in text
+    """정찰 규칙 절 — 정찰 단계 실패도 게이트를 거친다. 한때 여기서 바로 CDP 로 갔다.
+
+    같은 이유로 정찰 규칙 절 하나로 좁혀서 본다 — 소프트블록 절에 같은 문구가 남아 있다는
+    이유로 이 절의 회귀를 놓치면 안 된다.
+    """
+    section = _recon_rules_section()
+    assert "이음매 통지 게이트로 돌아간다" in section
+    assert "정찰 단계에서도 사다리 B 진입은 사용자 확인을 거친다" in section
