@@ -245,29 +245,72 @@ def test_first_escalation_still_requires_consent(tmp_path):
                                        "fetcher_type": "chrome_cdp"})
 
 
-def test_consent_required_when_sticky_local_has_no_consent_to_inherit(tmp_path):
-    """분류가 sticky 병합으로만 넘어와도 게이트는 걸린다 — 상속할 consent 가 없기 때문이다.
+def test_local_declaration_via_sticky_merge_saves_without_consent(tmp_path):
+    """robots/ToS 사유의 `distribution: local` 선언은 이음매를 넘은 기록이 아니다 —
+    rung 1(탐색)에 머무르는 한 sticky 병합을 통해 넘어와도 consent 를 요구하지 않는다.
 
-    이 테스트가 잡는 회귀: distribution() 을 병합 전 caller dict 에 대해 계산하도록
-    바꾼 변형은, consent 를 post-merge 로 읽더라도 이 케이스를 그냥 통과시킨다 —
-    merge 전 profile 은 fetcher_type: "Fetcher" 하나뿐이라 rung 1(공개)로 보이기
-    때문이다. 실제로 저장될 profile 은 sticky 로 "local" 을 물려받는데도 게이트가
-    발화하지 않는다."""
+    ITEM 6: 게이트 조건이 distribution(profile)=="local" 에서 ladder_rung(profile)>=4 로
+    좁혀졌다. declare-local(robots 로 거른 것)과 이음매 통지 기록(WAF 를 실제로 돌파한 것)은
+    서로 다른 결정이므로 더 이상 하나로 묶이지 않는다."""
     mgr = DomainProfile(base_dir=str(tmp_path))
     target = tmp_path / "example_com"
     target.mkdir()
     (target / "profile.json").write_text(
         '{"domain": "example.com", "distribution": "local", '
         '"distribution_reason": "robots", "fetcher_type": "Fetcher"}', encoding="utf-8")
+    mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Fetcher"})
+    reloaded = mgr.load("example.com")
+    assert reloaded["distribution"] == "local"
+    assert "consent" not in reloaded
+
+
+def test_consent_required_when_sticky_antibot_strategy_has_no_consent_to_inherit(tmp_path):
+    """rung 판정이 sticky 병합으로만 넘어와도 게이트는 걸린다 — 상속할 consent 가 없기 때문이다.
+
+    이 테스트가 잡는 회귀: 게이트를 병합 전 caller dict 에 대해 계산하도록 바꾼 변형은
+    이 케이스를 그냥 통과시킨다 — merge 전 profile 은 fetcher_type: "FetcherSession" 하나뿐이라
+    rung 2(공개)로 보이기 때문이다. 실제로 저장될 profile 은 sticky 로 antibot_strategy:
+    "impersonate"(rung 4)를 물려받는데도 게이트가 발화하지 않는다."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    target = tmp_path / "example_com"
+    target.mkdir()
+    (target / "profile.json").write_text(
+        '{"domain": "example.com", "antibot_strategy": "impersonate", '
+        '"fetcher_type": "FetcherSession"}', encoding="utf-8")
     with pytest.raises(ConsentRequired):
-        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Fetcher"})
+        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "FetcherSession"})
 
 
-def test_consent_required_when_caller_omits_fetcher_type(tmp_path):
-    """fetcher_type 조차 없는 최초 호출도 (rung 0 · default-deny) 게이트가 막는다."""
+def test_omitted_fetcher_type_saves_without_consent_but_stays_local(tmp_path):
+    """rung 미상(0)은 "이음매를 넘었다" 는 기록이 아니다 — consent 를 요구하지 않는다.
+
+    배포 판정은 여전히 default-deny 라 local 로 남는다(profile_policy.distribution) — 게이트가
+    느슨해진 것과 배포되지 않는 것은 별개다."""
+    from profile_policy import distribution as _distribution
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    mgr.save("example.com", {"domain": "example.com"})
+    reloaded = mgr.load("example.com")
+    assert "consent" not in reloaded
+    assert _distribution(reloaded) == "local"
+
+
+def test_authenticated_browser_saves_without_consent_but_stays_local(tmp_path):
+    """withheld 도구(ladder_rung 미상)는 이음매를 넘은 게 아니다 — consent 를 요구하지 않으면서도
+    local 로 남는다(자격증명 수집은 ToS 노출이 가장 큰 범주라 별도로 배포에서 제외된다)."""
+    from profile_policy import distribution as _distribution
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    mgr.save("example.com", {"domain": "example.com", "fetcher_type": "authenticated_browser"})
+    reloaded = mgr.load("example.com")
+    assert "consent" not in reloaded
+    assert _distribution(reloaded) == "local"
+
+
+def test_rung_four_profile_requires_consent(tmp_path):
+    """4단(지문 정렬)도 6단과 마찬가지로 이음매를 넘은 것이다 — consent 없이는 거부된다."""
     mgr = DomainProfile(base_dir=str(tmp_path))
     with pytest.raises(ConsentRequired):
-        mgr.save("example.com", {"domain": "example.com"})
+        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "FetcherSession",
+                                 "antibot_strategy": "curl_cffi_grid"})
 
 
 @pytest.mark.parametrize("malformed_consent", ["proceed", ["proceed"], 123])
@@ -291,6 +334,29 @@ def test_consent_choice_must_be_proceed(tmp_path, choice):
         mgr.save("example.com", {"domain": "example.com", "fetcher_type": "chrome_cdp",
                                  "consent": {"notified_at": "2026-08-20T00:00:00+09:00",
                                              "choice": choice}})
+
+
+# ── ITEM 5(b): notified_at 자리표시자/빈 값은 통지의 증거가 아니다 ──
+
+@pytest.mark.parametrize("bad_notified_at", ["", None, "<ISO8601>", "<통지한 실제 시각 ISO8601>"])
+def test_consent_rejects_placeholder_or_missing_notified_at(tmp_path, bad_notified_at):
+    """Step 5-A 템플릿을 그대로 복사해 notified_at 을 자리표시자로 남기면 게이트를 통과할
+    수 없다 — choice 만 "proceed" 여도, 실제로 통지했다는 증거가 되지 못한다."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    with pytest.raises(ConsentRequired):
+        mgr.save("example.com", {"domain": "example.com", "fetcher_type": "chrome_cdp",
+                                 "consent": {"notified_at": bad_notified_at,
+                                             "choice": "proceed"}})
+
+
+def test_consent_accepts_real_timestamp(tmp_path):
+    """자리표시자가 아닌 실제 시각 문자열은 정상적으로 통과한다."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    mgr.save("example.com", {
+        "domain": "example.com", "fetcher_type": "chrome_cdp",
+        "consent": {"notified_at": "2026-08-20T14:30:00+09:00", "choice": "proceed"},
+    })
+    assert mgr.load("example.com")["consent"]["notified_at"] == "2026-08-20T14:30:00+09:00"
 
 
 def test_consent_dropped_when_profile_downgrades_to_public(tmp_path):

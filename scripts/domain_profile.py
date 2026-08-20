@@ -22,7 +22,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 
-from profile_policy import distribution
+from profile_policy import distribution, ladder_rung
 from utils import sanitize_filename, setup_logger
 
 
@@ -42,9 +42,10 @@ ANTIBOT_STRATEGIES = {
 # - capability: 능력 SSOT. fetcher_type 역추론 폴백이 지금은 손실을 감추지만, 그 폴백이
 #   깨지는 순간(라이브러리가 클래스 이름을 또 바꾸는 순간) 드러난다 — 폴백이 필요 없어질
 #   때가 아니라 필요해질 때 사라지면 안 된다.
-# - consent: 이미 내린 통지·선택 기록. 그 도메인에 프로필이 존재한다는 사실 자체가 그
-#   사용자가 한 번 통지받고 진행을 골랐다는 뜻이다 — 매 수집마다 다시 묻지 않는다. (프로필이
-#   아예 없는 최초 진입에는 상속할 기록이 없으므로 게이트는 그대로 발화한다.)
+# - consent: 이미 내린 통지·선택 기록. 그 프로필에 consent 가 이미 있다는 사실이 그 사용자가
+#   한 번 통지받고 진행을 골랐다는 뜻이다 — 매 수집마다 다시 묻지 않는다. (프로필은 있어도
+#   consent 가 없는 도메인 — 상속할 기록이 없는 최초 이음매 통과 포함 — 에는 게이트가 그대로
+#   발화한다.)
 # - antibot_strategy: distribution() 이 rung 을 매길 때 보는 판정 필드 중 하나다(다른 하나인
 #   fetcher_type 은 sticky 가 아니다 — 구현체가 바뀌는 건 자연스러우므로). 예: oliveyoung_co_kr
 #   은 fetcher_type 만 보면 사다리 A(FetcherSession) 지만 antibot_strategy: "impersonate" 때문에
@@ -52,6 +53,25 @@ ANTIBOT_STRATEGIES = {
 #   consent 도 (public 프로필에서는 지워야 하므로) 함께 씻겨나간다.
 STICKY_FIELDS = ("distribution", "distribution_reason", "capability", "consent",
                   "antibot_strategy")
+
+
+def _is_real_timestamp(value) -> bool:
+    """`consent.notified_at` 이 진짜 시각인지 — placeholder 나 빈 값이 아닌지 판별.
+
+    Step 5-A 템플릿을 그대로 복사해 `<ISO8601>` 같은 자리표시자를 지우지 않고 남기면,
+    통지를 실제로 한 적이 없어도 choice 만 "proceed" 면 게이트를 통과했다. 그 값이
+    거짓이면 consent 기록의 유일한 쓸모(실제로 통지했다는 증거)가 사라지므로, 여기서
+    막는다. 형식 검증이 아니라 "명백한 자리표시자를 배제" 하는 최소한의 체크다 —
+    실제 타임스탬프 문법을 강제하지는 않는다.
+    """
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("<") and stripped.endswith(">"):
+        return False
+    return True
 
 
 class ConsentRequired(Exception):
@@ -63,10 +83,13 @@ class ConsentRequired(Exception):
     consent 는 '근거' 가 아니라 '선택' 을 기록한다 — 무엇을 정당화했는지가 아니라
     통지를 봤고 진행을 골랐다는 사실과 그 시각만 남긴다.
 
-    consent 는 sticky 필드다 — 한 번 기록되면 그 도메인의 다음 저장들이 다시 요구하지
-    않는다. 프로필이 이미 있다는 것 자체가 "이 사용자는 이미 통지받고 진행을 골랐다"
-    는 근거이기 때문이다. 그 도메인에 프로필이 아직 없는 최초 진입에는 상속할 기록이
-    없으므로, 게이트는 정확히 거기서만 발화한다.
+    consent 는 sticky 필드다 — 한 번 기록되면 그 도메인의 다음 저장들이 (STICKY_FIELDS
+    병합을 통해) 다시 요구하지 않는다. 트리거는 "프로필이 있다" 가 아니라 "그 프로필에
+    consent 기록이 있다" 는 사실이다 — 사다리 A로만 수집돼 오던 도메인이 이번에 처음
+    이음매를 넘는 경우처럼, 프로필은 있어도 상속할 consent 가 없으면 게이트는 그대로
+    발화한다. 게이트 자체는 배포 판정이 아니라 ladder_rung(profile) >= 4, 즉 실제로
+    이음매를 넘었는지로만 발화한다(distribution()=="local" 과는 다르다 — 후자는 robots/ToS
+    declare-local, 판별 불가, withheld 도구까지 포함하는 더 넓은 집합이다).
     """
 
 
@@ -98,16 +121,31 @@ class DomainProfile:
             if field not in profile and field in existing:
                 profile[field] = existing[field]
 
-        if distribution(profile) == "local":
+        # 게이트는 배포 판정(distribution)이 아니라 이음매를 실제로 넘었는지(ladder_rung >= 4)
+        # 로만 발화한다. distribution()=="local" 은 더 넓은 집합이다 — robots/ToS 사유의 명시적
+        # `distribution: "local"` 선언(rung 1이어도 해당), 판별 불가(rung 0), withheld 도구
+        # (예: authenticated_browser)도 전부 "local" 로 묶인다. 그 셋은 이음매를 넘은 사건이
+        # 아니므로 consent 를 요구하면 안 된다 — consent 는 "4단 이상 도구로 실제로 돌파했다"
+        # 는 사실 하나만 기록한다.
+        if ladder_rung(profile) >= 4:
             consent = profile.get("consent")
-            if not isinstance(consent, dict) or consent.get("choice") != "proceed":
+            notified_at = consent.get("notified_at") if isinstance(consent, dict) else None
+            consent_ok = (
+                isinstance(consent, dict)
+                and consent.get("choice") == "proceed"
+                and _is_real_timestamp(notified_at)
+            )
+            if not consent_ok:
                 raise ConsentRequired(
-                    f"{domain}: 이 프로필은 자동 접근 차단을 넘어선 방법을 기록하고 있습니다. "
-                    "사용자에게 한 번 통지하고, 그 선택을 consent 블록에 남긴 뒤 저장하세요 — "
-                    '예: {"notified_at": "<ISO8601>", "choice": "proceed"}. '
+                    f"{domain}: 이 프로필은 자동 접근 차단을 넘어선 방법(사다리 B, 4단 이상)을 "
+                    "기록하고 있습니다. 사용자에게 실제로 한 번 통지하고, 그 선택과 통지한 실제 "
+                    "시각을 consent 블록에 남긴 뒤 저장하세요 — "
+                    '예: {"notified_at": "2026-08-20T14:30:00+09:00", "choice": "proceed"}. '
+                    "<ISO8601> 같은 자리표시자나 빈 값은 유효하지 않습니다. "
                     "권한 근거를 적을 필요는 없습니다."
                 )
-        else:
+
+        if distribution(profile) != "local":
             # public 으로 (재)분류된 프로필에 이전 통지 이력이 남아있으면 안 된다 — consent 는
             # 배포되지 않는 로컬 결정의 기록이지, 배포 whitelist 에 들어갈 값이 아니다.
             # fetcher_type 은 sticky 가 아니므로, 도구가 사다리 A로 내려온 재수집은 이 분기를

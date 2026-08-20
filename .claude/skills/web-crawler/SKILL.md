@@ -68,10 +68,10 @@ profile_mgr.save(domain, {
     "pagination": {<CONFIG>},
     "api_endpoints": [<LIST>],
     "notes": "<특이사항>",
-    # 사다리 B(4단 이상)로 수집했을 때만 필수. 이음매 통지에서 사용자가 '진행' 을 고른 사실을
-    # 기록한다 — 근거가 아니라 선택이다. 사다리 A 프로필에는 넣지 않는다.
-    # 프로필이 이미 있으면 이 값은 자동으로 이어진다(sticky) — 매번 다시 물을 필요 없다.
-    "consent": {"notified_at": "<ISO8601>", "choice": "proceed"},
+    # 사다리 B(4단 이상)로 수집했을 때만. **실제로 통지했고 사용자가 '진행' 을 고른 경우에만 적는다** —
+    # 그 일이 없었으면 이 블록을 적지 않는다. 적으면 기록이 거짓이 되고, 이 기록의 유일한 쓸모가 사라진다.
+    # 근거가 아니라 선택을 적는다. 프로필이 이미 있으면 자동으로 이어지므로(sticky) 생략해도 된다.
+    "consent": {"notified_at": "<통지한 실제 시각 ISO8601>", "choice": "proceed"},
 })
 ```
 
@@ -114,7 +114,7 @@ profile_mgr.save(domain, {
 
 ### 정찰 규칙
 - agent-browser 접근 **최대 2회** 시도
-- 2회 실패 시 Chrome CDP 전략으로 전환
+- 2회 실패 시 **Step 3 의 이음매 통지 게이트로 돌아간다** — 정찰 단계에서도 사다리 B 진입은 사용자 확인을 거친다
 - 같은 도메인에 **5분 내 3회 이상 접근하지 않음**
 
 ### 정찰 항목
@@ -254,7 +254,7 @@ agent-browser를 못 쓰고 현재 Codex 세션에 `chrome:control-chrome` 스�
 - **'진행' 이면 그대로 사다리 B 로 간다.** 근거를 묻지도 검증하지도 않는다.
 - **통지는 이음매를 넘을 때 도메인당 한 번이다.** 4→5→6 으로 더 올라가도 다시 묻지 않는다.
 - 선택 사실과 시각을 프로필 `consent` 블록에 남긴다 (Step 5-A). 이게 없으면 프로필 저장이 거부된다.
-- **프로필이 이미 있으면 통지하지 않는다.** 우회형 프로필은 배포되지 않으므로, 로컬에 있다는 것은 그 사용자가 직접 만들었다는 뜻이고 만들 때 이미 통지를 받았다는 뜻이다.
+- **이미 `consent` 기록이 있는 프로필이면 통지하지 않는다.** 그 기록 자체가 이 사용자가 이 도메인에서 한 번 통지받고 진행을 골랐다는 증거다(sticky). 프로필이 있어도 `consent`가 없다면(예: 사다리 A로만 수집돼 오다가 이번에 처음 사이트가 막은 경우) 이번이 최초로 이음매를 넘는 것이므로 그대로 통지한다.
 - **CAPTCHA 도 같은 층위다** — 자동으로 풀지 않는 것은 그대로지만, 통지 없이 조용히 중단하지도 않는다. 다른 경로가 있는지 함께 제시한다.
 
 ### 사다리 B — 상대가 막고 있다 (통지 후 진행)
@@ -285,7 +285,7 @@ agent-browser를 못 쓰고 현재 Codex 세션에 `chrome:control-chrome` 스�
 
 ```
 올리려면:   ① 아래 칸이 실패했다는 '확인' (추측 아님)
-            ② 4단 이상이면 사용자의 한 번의 진행 선택 (프로필 재사용 시 면제)
+            ② 4단 이상이면 사용자의 한 번의 진행 선택 (이미 `consent` 기록이 있는 프로필이면 면제)
 
 내려오기:   6단으로 성공했어도 영구 자격이 아니다.
             사이트 구조가 바뀌면 다시 1단부터 판별한다.
@@ -380,14 +380,16 @@ verdict = detect_softblock(
 )
 if verdict["blocked"]:
     logger.error(f"소프트블록 감지 — {verdict['verdict']}: {verdict['signals']}")
-    # → 수집 강행 금지. Step 3 안티봇 분기로 에스컬레이션:
-    #   challenge/blocked + Akamai 시그널 → Chrome CDP
-    #   그 외 → curl_cffi 그리드 / StealthyFetcher / DynamicFetcher 상위 단계
+    #   무엇이 감지됐든, 다음 단계가 사다리 B(4단 이상)라면 **먼저 Step 3 의 이음매 통지 게이트를 거친다.**
+    #   소프트블록 감지는 "상대가 나를 식별하고 거절했다" 는 신호다 — 즉 이음매에 도달했다는 뜻이지,
+    #   이음매를 건너뛰어도 된다는 뜻이 아니다.
 ```
 
 **게이트 규칙:**
-1. `blocked=True`면 **수집을 강행하지 않는다.** 상위 Fetcher로 에스컬레이션하거나(antibot-strategies.md), 그래도 안 뚫리면 사용자에게 보고 후 중단.
-2. `verdict`가 `challenge`/`blocked`이고 Akamai 시그널(`_abck ~-1~` 등)이 같이 잡히면 **즉시 Chrome CDP**로 점프 (StealthyFetcher 헛고생 금지).
+1. `blocked=True`면 **수집을 강행하지 않는다.** 에스컬레이션 여부는 규칙 2(이음매 통지 게이트)를 따른다 — 게이트를 통과해 상위 단계로 가도 안 뚫리면 사용자에게 보고 후 중단.
+2. 소프트블록으로 판정되면 **수집을 멈추고 Step 3 의 이음매 통지 게이트로 돌아간다.**
+   감지된 유형(Akamai 시그널 / 챌린지 / 빈 셸)은 게이트 문구의 `<감지된 유형>` 에 넣는다.
+   사용자가 '진행' 을 고른 뒤에야 WAF capability 라우팅(4·5 를 건너뛸지 등)을 적용한다.
 3. `weak_ok`(셀렉터 미검증 통과)는 통과시키되, 수집 후 필드 채움률이 비정상적으로 낮으면 이 게이트를 의심한다.
 
 ### 일반 검증
@@ -416,19 +418,19 @@ from datetime import date
 profile_mgr = DomainProfile()  # base_dir=./fingerprints
 profile_mgr.save(domain, {
     "domain": domain,
-    "fetcher_type": "<FetcherSession|StealthyFetcher|DynamicFetcher|chrome_cdp|API_SESSION>",
+    "fetcher_type": "<Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체
     "antibot_type": "<none|cloudflare|akamai|naver_antibot|other>",
-    "antibot_strategy": "<none|stealthy|chrome_cdp>",
+    "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
     "site_type": "<static|csr|api|spa_session|akamai>",
     "selectors": {<필드: 셀렉터>},
     "pagination": {<config — type/param/limit 등>},
     "api_endpoints": [{<url, method, params, field_mapping>}],
     "notes": "<재수집 시 결정적인 한두 줄: 인증 필요 여부, 페이지네이션 트릭, 봇 차단 회피 포인트>",
     "last_used": str(date.today()),
-    # 사다리 B(4단 이상)로 수집했을 때만 필수. 이음매 통지에서 사용자가 '진행' 을 고른 사실을
-    # 기록한다 — 근거가 아니라 선택이다. 사다리 A 프로필에는 넣지 않는다.
-    # 프로필이 이미 있으면 이 값은 자동으로 이어진다(sticky) — 매번 다시 물을 필요 없다.
-    "consent": {"notified_at": "<ISO8601>", "choice": "proceed"},
+    # 사다리 B(4단 이상)로 수집했을 때만. **실제로 통지했고 사용자가 '진행' 을 고른 경우에만 적는다** —
+    # 그 일이 없었으면 이 블록을 적지 않는다. 적으면 기록이 거짓이 되고, 이 기록의 유일한 쓸모가 사라진다.
+    # 근거가 아니라 선택을 적는다. 프로필이 이미 있으면 자동으로 이어지므로(sticky) 생략해도 된다.
+    "consent": {"notified_at": "<통지한 실제 시각 ISO8601>", "choice": "proceed"},
 })
 ```
 
@@ -437,7 +439,9 @@ profile_mgr.save(domain, {
 1. **`notes` 필드는 비워두지 않는다.** 다음 사람(미래의 나 포함)이 정찰 안 하고도 바로 수집할 수 있는 한두 줄의 결정적 정보를 적는다 — "API key는 OK, job_group_id=518이 일반 목록", "Akamai 보호라 Chrome CDP 필수", "review API는 POST에 originProductNo 필요" 같은 형식.
 2. **인증 토큰/쿠키/내부 API key는 profile.json에 박지 않는다.** `.gitignore`가 `cookies*.json`/`auth*.json`/`*token*.json`/`*secret*`은 차단하지만 profile.json은 commit 대상이므로 평문 자격증명이 새지 않게 분리한다.
 3. **fetcher_type / antibot_strategy 둘은 무조건 채운다.** 다음 실행에서 Step 1-A가 이 두 값만 보고 fetcher chain을 건너뛰므로, 빈 값이면 게이트 기능을 못 한다.
-4. **이미 profile이 있으면 `last_used`만 갱신하지 말고**, 이번 수집에서 새로 알아낸 게 있으면 `notes`와 endpoint/selector를 누적/수정한다.
+4. **사다리 B 로 수집했으면 `antibot_strategy` 에 그 사실을 적는다.** `none` 으로 적으면 분류기가 탐색 단계로 오판해 그 레시피를 배포 대상에 넣고 `consent` 기록도 지운다. 실제로 쓴 것을 적을 것.
+5. 사다리 B 프로필은 `consent` 없이는 저장이 거부된다(`ConsentRequired`). 심사가 아니라 기록이다.
+6. **이미 profile이 있으면 `last_used`만 갱신하지 말고**, 이번 수집에서 새로 알아낸 게 있으면 `notes`와 endpoint/selector를 누적/수정한다.
 
 저장이 끝나면 Step 6으로 진행. profile.json 저장 실패 시 수집 결과는 살아있어도 **"파이프라인 미완료"**로 보고하고 사용자에게 원인을 알린다 (디스크 권한, 스키마 누락 등).
 
