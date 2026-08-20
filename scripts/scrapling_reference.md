@@ -275,29 +275,35 @@ API 발견? ──Yes──→ FetcherSession (가장 빠르고 안정적)
    │
    No
    │
-안티봇 보호? ──Yes──→ StealthyFetcher (Cloudflare 등 자동 우회)
-   │
-   No
-   │
 JS 렌더링 필요? ──Yes──→ DynamicFetcher (Playwright 브라우저 렌더링)
    │
    No
    │
-Fetcher (기본 HTTP, 가장 가벼움)
+plain_get (1단 — 위장 없는 평문 HTTP)
 ```
+
+안티봇 보호가 있는 사이트는 이 트리 밖이다. 위 세 갈래(사다리 A, 1~3단)를 소진했다는 것은
+사이트가 나를 식별하고 거절했다는 뜻이므로, 자동으로 `StealthyFetcher`/Chrome CDP 로 넘어가지
+않고 사용자에게 한 번 확인한다. 상세는 `.claude/skills/web-crawler/references/fetcher-patterns.md`.
 
 ## 10. 에스컬레이션 체인
 
-수집 실패 시 자동 상위 Fetcher 전환:
+자동 전환은 **사다리 A(1~3단)에서 끝난다:**
 
 ```
-Fetcher → StealthyFetcher → DynamicFetcher → agent-browser 폴백
+plain_get → plain_session → DynamicFetcher
+  1단 정적    2단 숨은 API    3단 JS 렌더링
 ```
+
+그 위 티어(`curl_cffi` 그리드 · `StealthyFetcher` · `chrome_cdp`)는 **능력으로 전부 남아 있되
+자동 체인에 없다.** 3단까지 소진했다는 것은 사이트가 나를 식별하고 거절했다는 뜻이므로,
+그 지점에서 자동으로 넘어가지 않고 사용자에게 한 번 확인한다.
+상세는 `.claude/skills/web-crawler/references/fetcher-patterns.md`.
 
 ## 11. 구현 시 발견된 사항
 
 - Scrapling Fetcher 응답에 `.json()` 메서드 존재 → FetcherSession 없이도 API JSON 파싱 가능
-- `Fetcher.configure()` 사용 권장 (기존 방식은 deprecated 경고, v0.3에서 제거 예정)
+- `Fetcher.configure()` 는 **파서 전용**이다 — `impersonate` 등 fetch 인자를 받지 않는다(`ValueError`). 위장 기본값을 끄려면 `scripts/utils.py` 의 `plain_get()` / `plain_session()` 을 쓴다
 - Windows cp949 인코딩 문제: stdout에 `£` 등 특수문자 출력 시 `io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')` 필요
 - Spider 완료 시 crawldir 체크포인트를 자동 정리함
 - Spider `on_error` 시그니처: `(self, request: Request, error: Exception)` — request 인자 필요
