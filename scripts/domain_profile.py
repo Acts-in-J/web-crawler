@@ -34,6 +34,9 @@ ANTIBOT_STRATEGIES = {
 }
 
 # 호출자가 새 dict 를 만들어 넘겨도 살아남아야 하는 필드.
+# 공통 성격: 전부 "이 프로필을 배포해도 되는가" 를 결정하는 데 관여한다 — 호출자가 생략
+# 만으로 그 답을 바꿔서는 안 된다(보존이지 고정은 아니다: 명시적으로 다시 넘기면 그 값이
+# 이긴다. 아래 각 필드 참조).
 # - distribution/distribution_reason: 배포 여부 선언. 없으면 다음 수집 한 번으로 미배포
 #   결정이 조용히 지워진다.
 # - capability: 능력 SSOT. fetcher_type 역추론 폴백이 지금은 손실을 감추지만, 그 폴백이
@@ -42,7 +45,13 @@ ANTIBOT_STRATEGIES = {
 # - consent: 이미 내린 통지·선택 기록. 그 도메인에 프로필이 존재한다는 사실 자체가 그
 #   사용자가 한 번 통지받고 진행을 골랐다는 뜻이다 — 매 수집마다 다시 묻지 않는다. (프로필이
 #   아예 없는 최초 진입에는 상속할 기록이 없으므로 게이트는 그대로 발화한다.)
-STICKY_FIELDS = ("distribution", "distribution_reason", "capability", "consent")
+# - antibot_strategy: distribution() 이 rung 을 매길 때 보는 판정 필드 중 하나다(다른 하나인
+#   fetcher_type 은 sticky 가 아니다 — 구현체가 바뀌는 건 자연스러우므로). 예: oliveyoung_co_kr
+#   은 fetcher_type 만 보면 사다리 A(FetcherSession) 지만 antibot_strategy: "impersonate" 때문에
+#   local 로 분류된다. 이 필드가 생략만으로 사라지면 미배포 결정이 조용히 public 으로 뒤집히고,
+#   consent 도 (public 프로필에서는 지워야 하므로) 함께 씻겨나간다.
+STICKY_FIELDS = ("distribution", "distribution_reason", "capability", "consent",
+                  "antibot_strategy")
 
 
 class ConsentRequired(Exception):

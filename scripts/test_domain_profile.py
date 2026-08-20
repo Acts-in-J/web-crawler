@@ -136,6 +136,48 @@ def test_capability_survives_resave(tmp_path):
     assert mgr.load("example.com")["capability"] == "session"
 
 
+def test_antibot_strategy_survives_resave(tmp_path):
+    """분류를 결정하는 필드가 생략만으로 바뀌면, 미배포 결정이 조용히 뒤집힌다."""
+    from profile_policy import distribution
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    mgr.save("example.com", {
+        "domain": "example.com", "fetcher_type": "FetcherSession",
+        "antibot_strategy": "impersonate",
+        "consent": {"notified_at": "2026-08-20T00:00:00+09:00", "choice": "proceed"},
+    })
+    mgr.save("example.com", {"domain": "example.com", "fetcher_type": "FetcherSession"})
+    reloaded = mgr.load("example.com")
+    assert reloaded["antibot_strategy"] == "impersonate"
+    assert distribution(reloaded) == "local"
+
+
+def test_caller_can_still_clear_antibot_strategy(tmp_path):
+    """보존이지 고정이 아니다 — 명시적으로 넘기면 그 값이 이긴다."""
+    from profile_policy import distribution
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    mgr.save("example.com", {
+        "domain": "example.com", "fetcher_type": "FetcherSession",
+        "antibot_strategy": "impersonate",
+        "consent": {"notified_at": "2026-08-20T00:00:00+09:00", "choice": "proceed"},
+    })
+    mgr.save("example.com", {"domain": "example.com", "fetcher_type": "FetcherSession",
+                             "antibot_strategy": "none"})
+    assert distribution(mgr.load("example.com")) == "public"
+
+
+def test_save_does_not_mutate_callers_dict(tmp_path):
+    """save() 는 호출자의 dict 를 건드리지 않는다 — ITEM 5 의 pop 이 이걸 load-bearing 으로 만들었다."""
+    import copy
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    caller = {
+        "domain": "example.com", "fetcher_type": "FetcherSession",
+        "consent": {"notified_at": "2026-08-20T00:00:00+09:00", "choice": "proceed"},
+    }
+    snapshot = copy.deepcopy(caller)
+    mgr.save("example.com", caller)
+    assert caller == snapshot
+
+
 # ── P2-4: consent 게이트 ──
 import pytest
 
