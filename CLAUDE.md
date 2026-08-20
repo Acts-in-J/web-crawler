@@ -176,12 +176,12 @@ python scripts/sync_domain_list.py --check  # 어긋나면 exit 1
 | 〃 — agent-browser 불가 시 | Claude in Chrome(Claude) / ChatGPT Chrome Browser Use(Codex, 연결 시) → DynamicFetcher/Playwright | host별 폴백 티어. 어느 티어를 썼는지 profile `notes`에 기록 |
 | 수동 로그인 + 쿠키/JWT 추출 | agent-browser | 사용자 상호작용 필요 |
 | 대량 데이터 수집 | Scrapling | 빠름, Fetcher 계층, 자가 치유 |
-| 고급 WAF(Akamai 계열) 대응 — **통지 이후** | Chrome CDP (`scripts/chrome_cdp.py`) | 4·5단이 원리적으로 안 통함 |
+| 브라우저 세션이 필요한 사이트 대응 — **통지 이후** | Chrome CDP (`scripts/chrome_cdp.py`) | 4·5단이 원리적으로 안 통함 |
 | 진행상황 체크포인트 | `scripts/progress.py` | 장시간 수집 시 pause/resume 지원 |
 | 엑셀 출력 | openpyxl (`scripts/export_excel.py`) | 공통 모듈 |
 
 **절대 agent-browser로 대량 수집하지 않는다.** 정찰과 수집은 분리. **Claude in Chrome과 ChatGPT Chrome Browser Use도 동일** — 정찰 전용이며 브라우저에서 전량 추출하는 것은 절대 규칙 2 위반.
-**원격 전용 환경(Cowork 등)에서는 정찰까지만 가능하다.** 샌드박스 egress 기본값이 "package managers only"라 대상 사이트 접속이 막히고, 통과시켜도 데이터센터 IP라 안티봇 프로필이 재현되지 않으며, VM에서 호스트 Chrome CDP(9222)에 못 붙어 Akamai 대응이 죽는다. 원격은 정찰 → profile.json 갱신까지, 수집은 로컬에서.
+**원격 전용 환경(Cowork 등)에서는 정찰까지만 가능하다.** 샌드박스 egress 기본값이 "package managers only"라 대상 사이트 접속이 막히고, 통과시켜도 데이터센터 IP라 안티봇 프로필이 재현되지 않으며, VM에서 호스트 Chrome CDP(9222)에 못 붙어 브라우저 세션이 필요한 사이트 대응이 죽는다. 원격은 정찰 → profile.json 갱신까지, 수집은 로컬에서.
 **절대 profile 조회 없이 정찰부터 시작하지 않는다.** profile 우선.
 
 ## Fetcher 선택 의사결정 트리
@@ -225,7 +225,7 @@ Phase 0: 공인 우회로 있나? ──Yes──→ yt-dlp / RSS·Atom / oEmbed
 - `_abck`, `bm_sz`, `ak_bmsc` 쿠키 존재
 - `sec-if-cpt-container` 챌린지 페이지
 
-### Chrome CDP 전략 (Akamai/고급 WAF 대응)
+### Chrome CDP 전략 (브라우저 세션이 필요한 사이트 대응)
 
 ```bash
 # 1. Chrome 실행 (사용자 Chrome 종료 필요)
