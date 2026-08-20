@@ -76,3 +76,15 @@ def test_save_and_load_handle_bom(tmp_path):
     assert mgr.load("example.com")["distribution"] == "local"
     mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Fetcher"})
     assert mgr.load("example.com")["distribution"] == "local"   # sticky 가 BOM 파일에서도 보존
+
+
+def test_save_survives_ansi_encoded_existing_profile(tmp_path):
+    """CLAUDE.md 가 경고하는 대로 Set-Content 는 ANSI 로 쓴다 — 한글 notes 가 그 지뢰다."""
+    from domain_profile import DomainProfile
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    target = tmp_path / "example_com"
+    target.mkdir()
+    (target / "profile.json").write_bytes(
+        '{"domain": "example.com", "notes": "한글 메모"}'.encode("cp949"))
+    mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Fetcher"})
+    assert mgr.load("example.com")["fetcher_type"] == "Fetcher"

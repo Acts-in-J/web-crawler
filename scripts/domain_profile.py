@@ -42,7 +42,7 @@ class DomainProfile:
         profile = dict(profile)   # 호출자의 dict 를 건드리지 않는다
         try:
             existing = self.load(domain) or {}
-        except (json.JSONDecodeError, OSError):
+        except (ValueError, OSError):
             existing = {}       # 기존 파일이 깨졌어도 저장은 진행한다 — 수집 성공 후 게이트에서 죽으면 안 된다
         for field in STICKY_FIELDS:
             if field not in profile and field in existing:

@@ -113,6 +113,22 @@ def is_withheld_tool(profile: dict) -> bool:
     return False
 
 
+def _has_non_string_field(profile: dict) -> bool:
+    """판별 대상 필드에 문자열이 아닌 값이 들어 있는가.
+
+    있으면 그 프로필은 우리가 읽을 수 있는 형태가 아니다 — 선언으로도 풀지 않는다.
+    한쪽 술어는 닫히고(ladder_rung -> 0) 다른 쪽은 열리면(is_withheld_tool -> False)
+    불변식이 조용히 무너진다. 그래서 두 술어보다 앞에서 한 번만 본다.
+    """
+    for field in _FIELDS:
+        raw = profile.get(field, _MISSING)
+        if raw is _MISSING or raw is None:
+            continue
+        if not isinstance(raw, str):
+            return True
+    return False
+
+
 def distribution(profile: dict) -> str:
     """"public" | "local".
 
@@ -123,6 +139,9 @@ def distribution(profile: dict) -> str:
     declared = profile.get("distribution")
     if declared == "local":
         return "local"
+
+    if _has_non_string_field(profile):
+        return "local"          # 판별 불가 입력 — 선언으로 풀 수 없다
 
     if is_withheld_tool(profile):
         return "local"          # 선언으로 풀 수 없다
@@ -150,7 +169,7 @@ def load_all() -> dict[str, dict]:
         try:
             data = json.loads(path.read_text(encoding="utf-8-sig"))
             out[path.parent.name] = data if isinstance(data, dict) else {"fetcher_type": UNREADABLE}
-        except (json.JSONDecodeError, OSError):
+        except (ValueError, OSError):
             out[path.parent.name] = {"fetcher_type": UNREADABLE}   # 미상 → default-deny
     return out
 

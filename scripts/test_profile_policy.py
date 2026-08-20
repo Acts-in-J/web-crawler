@@ -63,6 +63,19 @@ def test_unknown_tool_can_still_be_rescued():
                          "distribution": "public"}) == "public"
 
 
+@pytest.mark.parametrize("bad", [["authenticated_browser"], ["chrome_cdp"], {"t": "cdp"}, 4])
+def test_non_string_field_cannot_be_rescued_by_declaration(bad):
+    """읽을 수 없는 입력을 선언 한 줄로 배포하게 두면, 비문자열 하드닝이 무의미해진다."""
+    assert distribution({"fetcher_type": "Playwright", "antibot_strategy": bad,
+                         "distribution": "public"}) == "local"
+
+
+def test_string_unknown_tool_is_still_rescuable():
+    """'읽을 수 없음' 과 '읽었지만 모르는 도구' 는 다르다 — 후자는 여전히 구제 가능하다."""
+    assert distribution({"fetcher_type": "SomeInternalHelper",
+                         "distribution": "public"}) == "public"
+
+
 # ── distribution ──
 def test_ladder_a_is_public():
     assert distribution({"fetcher_type": "FetcherSession"}) == "public"
@@ -107,6 +120,18 @@ def test_corrupt_profile_is_withheld(tmp_path, monkeypatch):
     assert loaded["broken_com"]["fetcher_type"] == profile_policy.UNREADABLE
     assert not profile_policy.is_distributable(loaded["broken_com"])
     assert not profile_policy.is_distributable(loaded["notobject_com"])
+    assert profile_policy.public_dirs() == []
+
+
+def test_ansi_encoded_profile_is_withheld_not_fatal(tmp_path, monkeypatch):
+    """읽을 수 없는 인코딩은 public_dirs() 를 무너뜨리지 않고 미상으로 처리돼야 한다."""
+    import profile_policy
+    (tmp_path / "ansi_com").mkdir()
+    (tmp_path / "ansi_com" / "profile.json").write_bytes(
+        '{"domain": "a.com", "notes": "한글"}'.encode("cp949"))
+    monkeypatch.setattr(profile_policy, "FINGERPRINTS", tmp_path)
+    loaded = profile_policy.load_all()
+    assert loaded["ansi_com"]["fetcher_type"] == profile_policy.UNREADABLE
     assert profile_policy.public_dirs() == []
 
 
