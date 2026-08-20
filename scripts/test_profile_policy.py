@@ -37,6 +37,19 @@ def test_max_rung_wins():
     assert ladder_rung({"fetcher_type": "Fetcher", "antibot_strategy": "chrome_cdp"}) == 6
 
 
+@pytest.mark.parametrize("bad", [["chrome_cdp"], {"tool": "chrome_cdp"}, 6, True])
+def test_non_string_field_is_not_published(bad):
+    """문자열이 아닌 값은 '대응 없음' 이 아니라 '판별 불가' 다 — 배포하지 않는다."""
+    assert ladder_rung({"fetcher_type": "Fetcher", "antibot_strategy": bad}) == 0
+    assert distribution({"fetcher_type": "Fetcher", "antibot_strategy": bad}) == "local"
+
+
+def test_authenticated_browser_is_not_auto_published():
+    """로그인 기반 수집은 우회가 아니지만 자동 배포 대상도 아니다."""
+    assert distribution({"fetcher_type": "Playwright",
+                         "antibot_strategy": "authenticated_browser"}) == "local"
+
+
 # ── distribution ──
 def test_ladder_a_is_public():
     assert distribution({"fetcher_type": "FetcherSession"}) == "public"
@@ -50,20 +63,38 @@ def test_unknown_is_local_by_default_deny():
     assert distribution({"fetcher_type": "SomeNewBypassTool"}) == "local"
 
 
-def test_explicit_declaration_wins_over_rule():
-    """우회가 아닌 다른 이유(robots·ToS·계약)로 빼는 경우를 위한 탈출구."""
+def test_local_declaration_always_wins():
+    """조이는 방향은 무조건 인정된다."""
     assert distribution({"fetcher_type": "Fetcher", "distribution": "local"}) == "local"
-    assert distribution({"fetcher_type": "chrome_cdp", "distribution": "public"}) == "public"
+
+
+def test_public_declaration_cannot_overturn_ladder_b():
+    """푸는 방향으로는 사다리 B 판정을 뒤집지 못한다."""
+    assert distribution({"fetcher_type": "chrome_cdp", "distribution": "public"}) == "local"
+
+
+def test_public_declaration_can_rescue_unknown_tool():
+    """rung 0(미상) 오판은 선언으로 구제할 수 있다 — 이게 푸는 방향의 정당한 용도다."""
+    assert distribution({"fetcher_type": "SomeInternalHelper", "distribution": "public"}) == "public"
 
 
 def test_invalid_declaration_falls_back_to_rule():
     assert distribution({"fetcher_type": "chrome_cdp", "distribution": "maybe"}) == "local"
 
 
-def test_unreadable_profile_is_local():
-    """읽지 못한 프로필은 '내용 없음' 이 아니라 '미상' 이다 — 배포하지 않는다."""
-    from profile_policy import UNREADABLE
-    assert distribution({"fetcher_type": UNREADABLE}) == "local"
+def test_corrupt_profile_is_withheld(tmp_path, monkeypatch):
+    """읽기 실패는 '내용 없음' 이 아니라 '미상' 이다 — load_all 이 실제로 그렇게 만드는가."""
+    import profile_policy
+    (tmp_path / "broken_com").mkdir()
+    (tmp_path / "broken_com" / "profile.json").write_text("{not json", encoding="utf-8")
+    (tmp_path / "notobject_com").mkdir()
+    (tmp_path / "notobject_com" / "profile.json").write_text("[1, 2]", encoding="utf-8")
+    monkeypatch.setattr(profile_policy, "FINGERPRINTS", tmp_path)
+    loaded = profile_policy.load_all()
+    assert loaded["broken_com"]["fetcher_type"] == profile_policy.UNREADABLE
+    assert not profile_policy.is_distributable(loaded["broken_com"])
+    assert not profile_policy.is_distributable(loaded["notobject_com"])
+    assert profile_policy.public_dirs() == []
 
 
 def test_empty_profile_is_local():
@@ -92,4 +123,20 @@ def test_ladder_b_profiles_are_not_distributable(name):
 
 
 def test_expected_public_count():
-    assert len(public_dirs()) == 15
+    assert public_dirs() == [
+        "books_toscrape_com",
+        "builtini_co_kr",
+        "celimax_co_kr",
+        "data_seoul_go_kr",
+        "db_itkc_or_kr",
+        "g2b_go_kr",
+        "guesskorea_com",
+        "made-in-china_com",
+        "oliveyoung_co_kr",
+        "wanted_co_kr",
+        "www_11st_co_kr",
+        "www_fss_or_kr",
+        "www_gsmarena_com",
+        "www_k-startup_go_kr",
+        "www_kurly_com",
+    ]

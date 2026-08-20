@@ -34,7 +34,8 @@ LADDER_A_TOOLS = {
     "playwright": 3,
     "playwrightspaintercept": 3,
     "playwrightintercept": 3,
-    "authenticatedbrowser": 3,   # 로그인은 우회가 아니다
+    # authenticated_browser 는 의도적으로 넣지 않는다 — 우회는 아니지만 자격증명 수집은
+    # ToS 노출이 가장 큰 범주다. rung 0 으로 떨어뜨려 명시 선언 없이는 배포되지 않게 한다.
 }
 
 LADDER_B_TOOLS = {
@@ -53,6 +54,9 @@ _NEUTRAL = {"", "none", "null", "na"}
 
 # 읽기 실패한 프로필에 넣는 표식 — 어떤 도구 목록에도 없으므로 ladder_rung 이 0(미상)을 낸다
 UNREADABLE = "__unreadable__"
+
+# profile.get(field, _MISSING) 에서 '필드 자체가 없음' 과 '필드가 None' 을 구분하기 위한 표식.
+_MISSING = object()
 
 _NORM_RE = re.compile(r"[^a-z0-9]")
 
@@ -75,7 +79,12 @@ def ladder_rung(profile: dict) -> int:
     """
     rungs = []
     for field in _FIELDS:
-        key = _norm(profile.get(field))
+        raw = profile.get(field, _MISSING)
+        if raw is _MISSING or raw is None:
+            continue                     # 필드 없음 → 이 필드는 정보를 주지 않는다
+        if not isinstance(raw, str):
+            return 0                     # 문자열이 아니면 판별 불가 → default-deny
+        key = _norm(raw)
         if key in _NEUTRAL:
             continue        # '대응 없음' 은 정보지만 칸을 특정하지는 않는다
         if key in LADDER_B_TOOLS:
@@ -90,17 +99,18 @@ def ladder_rung(profile: dict) -> int:
 def distribution(profile: dict) -> str:
     """"public" | "local".
 
-    명시 distribution 필드가 있으면 그것이 최종이다. 우회가 아닌 다른 이유
-    (robots 차단·ToS·계약)로 빼야 하는 프로필을 자동 규칙에 욱여넣지 않기 위한 탈출구다.
+    선언은 **조이는 방향으로만 무조건 인정**한다. 푸는 방향은 사다리 A 또는 판별 불가
+    (rung <= 3)에 대해서만 허용한다 — 사다리 B 라고 '판정된' 프로필을 한 단어로 뒤집을 수
+    있으면, default-deny 정책 전체가 그 단어만큼만 강해진다.
     """
     declared = profile.get("distribution")
-    if declared in ("public", "local"):
-        return declared
+    if declared == "local":
+        return "local"
 
     rung = ladder_rung(profile)
-    if rung == 0:
-        return "local"          # default-deny: 모르면 배포하지 않는다
-    return "local" if rung >= 4 else "public"
+    if declared == "public" and rung <= 3:
+        return "public"
+    return "local" if (rung == 0 or rung >= 4) else "public"
 
 
 def is_distributable(profile: dict) -> bool:
@@ -118,7 +128,8 @@ def load_all() -> dict[str, dict]:
         return out
     for path in sorted(FINGERPRINTS.glob("*/profile.json")):
         try:
-            out[path.parent.name] = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            out[path.parent.name] = data if isinstance(data, dict) else {"fetcher_type": UNREADABLE}
         except (json.JSONDecodeError, OSError):
             out[path.parent.name] = {"fetcher_type": UNREADABLE}   # 미상 → default-deny
     return out

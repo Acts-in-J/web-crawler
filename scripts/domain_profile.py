@@ -3,6 +3,8 @@
 프로필 스키마:
 {
     "domain": "example.com",
+    "distribution": "public|local",       # 배포 가능 여부 선언 (scripts/profile_policy.py 참조)
+    "distribution_reason": "선언 사유",     # distribution 이 있을 때만 의미 있음
     "fetcher_type": "FetcherSession|Fetcher|StealthyFetcher|DynamicFetcher|chrome_cdp",
     "antibot_type": "none|cloudflare|akamai|other",   # 봇 차단 유형
     "antibot_strategy": "none|stealthy|chrome_cdp",    # 대응 전략
@@ -25,6 +27,10 @@ ANTIBOT_STRATEGIES = {
     "none": "none",
 }
 
+# 호출자가 새 dict 를 만들어 넘겨도 살아남아야 하는 필드.
+# 배포 여부 선언이 여기 없으면, 다음 수집 한 번으로 미배포 결정이 조용히 지워진다.
+STICKY_FIELDS = ("distribution", "distribution_reason")
+
 
 class DomainProfile:
     """도메인별 사이트 프로필을 관리."""
@@ -33,6 +39,12 @@ class DomainProfile:
         self.base_dir = base_dir
 
     def save(self, domain: str, profile: dict):
+        profile = dict(profile)   # 호출자의 dict 를 건드리지 않는다
+        existing = self.load(domain) or {}
+        for field in STICKY_FIELDS:
+            if field not in profile and field in existing:
+                profile[field] = existing[field]
+
         domain_dir = os.path.join(self.base_dir, sanitize_filename(domain))
         os.makedirs(domain_dir, exist_ok=True)
         filepath = os.path.join(domain_dir, "profile.json")
