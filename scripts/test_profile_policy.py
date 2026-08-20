@@ -1,7 +1,8 @@
 """프로필 배포 정책 — 우회 레시피가 배포에 섞이지 않는지 검사."""
 import pytest
 
-from profile_policy import distribution, is_distributable, ladder_rung, load_all, public_dirs
+from profile_policy import (distribution, is_distributable, is_unrecognized_tool,
+                             ladder_rung, load_all, public_dirs)
 
 
 # ── 정규화: 같은 것을 두 표기로 쓰고 있다 (chrome_cdp / CDP) ──
@@ -25,6 +26,43 @@ def test_ladder_b_tools():
 def test_unknown_tool_is_rung_zero():
     """모르는 도구는 판별 불가(0) — distribution 이 default-deny 로 받는다."""
     assert ladder_rung({"fetcher_type": "SomeNewBypassTool"}) == 0
+
+
+def test_naver_antibot_reaches_rung_six():
+    """네이버 계열 안티봇도 실제 크롬 세션이 필요하다 — 6단으로 분류된다."""
+    assert ladder_rung({"antibot_strategy": "naver_antibot"}) == 6
+    assert distribution({"antibot_strategy": "naver_antibot"}) == "local"
+
+
+# ── is_unrecognized_tool: ladder_rung 이 0 으로 뭉개는 두 경우를 구분한다 ──
+@pytest.mark.parametrize("profile", [
+    # 한쪽 필드가 인식되는 rung-6 값이어도, 다른 필드가 모르는 값이면 ladder_rung 은 그
+    # 신호를 버리고 0 을 낸다(첫 미상에서 즉시 return) — is_unrecognized_tool 은 버려지지
+    # 않고 이 조합을 잡아야 한다.
+    {"fetcher_type": "chrome_cdp", "antibot_strategy": "some_typo_value"},
+    {"fetcher_type": "fetch_via_grid"},
+    {"fetcher_type": "StealthyFetcher(solve_cloudflare=True)"},
+    {"fetcher_type": "CDP (headed)"},
+])
+def test_unrecognized_tool_string_is_detected(profile):
+    """오타·신종·서술형 문자열은 '정보 없음' 이 아니다 — 판별 불가와는 다르게 잡아야 한다."""
+    assert is_unrecognized_tool(profile)
+
+
+def test_unrecognized_tool_ignores_absent_fields():
+    """필드가 아예 없거나 None 이면 '완화' 유지 — 미상(rung 0)일 뿐 unrecognized 는 아니다."""
+    assert not is_unrecognized_tool({})
+    assert not is_unrecognized_tool({"fetcher_type": None, "antibot_strategy": None})
+
+
+def test_unrecognized_tool_accepts_known_values():
+    assert not is_unrecognized_tool({"fetcher_type": "Fetcher", "antibot_strategy": "none"})
+    assert not is_unrecognized_tool({"fetcher_type": "chrome_cdp"})
+    assert not is_unrecognized_tool({"antibot_strategy": "authenticated_browser"})
+
+
+def test_unrecognized_tool_flags_non_string():
+    assert is_unrecognized_tool({"fetcher_type": ["chrome_cdp"]})
 
 
 def test_neutral_values_are_ignored():

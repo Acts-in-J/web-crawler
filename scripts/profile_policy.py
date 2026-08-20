@@ -47,6 +47,7 @@ LADDER_B_TOOLS = {
     "stealthyfetcher": 5,
     "cdp": 6,
     "chromecdp": 6,
+    "naverantibot": 6,       # 네이버 계열 안티봇 — 실제 크롬 세션이 필요하다
 }
 
 # '전략 없음' 을 뜻하는 값들 — 미상(unknown)과 구분해야 한다.
@@ -109,6 +110,25 @@ def is_withheld_tool(profile: dict) -> bool:
     for field in _FIELDS:
         raw = profile.get(field)
         if isinstance(raw, str) and _norm(raw) in WITHHELD_TOOLS:
+            return True
+    return False
+
+
+def is_unrecognized_tool(profile: dict) -> bool:
+    """존재하지만 어느 표에도 없는 값을 쓰고 있는가.
+
+    '없는 필드'(정보 없음)와 '있는데 모르는 값'(오타·신종·서술형)은 다르다.
+    후자는 이음매를 건넜는지 판단할 수 없다는 뜻이므로, 게이트는 걸어야 한다 —
+    ladder_rung 은 둘 다 0 으로 돌려주기 때문에 그것만으로는 구분되지 않는다.
+    """
+    known = set(LADDER_A_TOOLS) | set(LADDER_B_TOOLS) | set(WITHHELD_TOOLS) | _NEUTRAL
+    for field in _FIELDS:
+        raw = profile.get(field, _MISSING)
+        if raw is _MISSING or raw is None:
+            continue                      # 없는 건 그냥 없는 것 — 완화 유지
+        if not isinstance(raw, str):
+            return True
+        if _norm(raw) not in known:
             return True
     return False
 

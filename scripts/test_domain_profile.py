@@ -313,6 +313,57 @@ def test_rung_four_profile_requires_consent(tmp_path):
                                  "antibot_strategy": "curl_cffi_grid"})
 
 
+# ── ladder_rung 이 0 으로 뭉갠 "판별 불가"(정보 없음) / "모르는 값"(오타·신종·서술형) 을
+# is_unrecognized_tool 로 구분한다. 이 구분이 없으면 ITEM 6 이 좁힌 게이트 조건
+# (ladder_rung(profile) >= 4) 이 모르는 값을 쓰는 프로필을 전부 통과시킨다 — 그 프로필을
+# 쓰는 사람이 바로 통지를 건너뛴 사람과 가장 많이 겹치는 인구다. ──
+
+@pytest.mark.parametrize("profile_extra", [
+    {"fetcher_type": "chrome_cdp", "antibot_strategy": "some_typo_value"},
+    {"fetcher_type": "fetch_via_grid"},
+    {"fetcher_type": "StealthyFetcher(solve_cloudflare=True)"},
+    {"fetcher_type": "CDP (headed)"},
+    {"fetcher_type": ["chrome_cdp"]},   # 비문자열도 판별 불가와 구분 없이 잡혀야 한다
+])
+def test_unrecognized_tool_still_requires_consent(tmp_path, profile_extra):
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    with pytest.raises(ConsentRequired):
+        mgr.save("example.com", {"domain": "example.com", **profile_extra})
+
+
+def test_unrecognized_tool_saves_once_consent_is_recorded(tmp_path):
+    """모르는 값이라도 통지가 실제로 있었으면 저장은 진행된다 — 게이트는 심사가 아니라 기록."""
+    mgr = DomainProfile(base_dir=str(tmp_path))
+    mgr.save("example.com", {
+        "domain": "example.com", "fetcher_type": "fetch_via_grid",
+        "consent": {"notified_at": "2026-08-20T14:30:00+09:00", "choice": "proceed"},
+    })
+    assert mgr.load("example.com")["fetcher_type"] == "fetch_via_grid"
+
+
+def test_relaxations_still_hold_after_unrecognized_tool_check(tmp_path):
+    """ITEM 1 백스톱을 추가해도 fix round 1 에서 열어둔 완화들은 그대로 유지된다."""
+    from profile_policy import distribution as _distribution
+    mgr = DomainProfile(base_dir=str(tmp_path))
+
+    # authenticated_browser — withheld, 이음매를 넘은 게 아니다.
+    mgr.save("auth.example", {"domain": "auth.example", "fetcher_type": "authenticated_browser"})
+    assert "consent" not in mgr.load("auth.example")
+
+    # rung 1 + robots 사유의 distribution: local — 이음매를 넘은 게 아니다.
+    mgr.save("robots.example", {"domain": "robots.example", "fetcher_type": "Fetcher",
+                                "distribution": "local", "distribution_reason": "robots"})
+    reloaded = mgr.load("robots.example")
+    assert reloaded["distribution"] == "local"
+    assert "consent" not in reloaded
+
+    # 필드 자체가 없는 최초 진입 — 정보가 없을 뿐 모르는 값을 쓴 게 아니다.
+    mgr.save("bare.example", {"domain": "bare.example"})
+    reloaded = mgr.load("bare.example")
+    assert "consent" not in reloaded
+    assert _distribution(reloaded) == "local"
+
+
 @pytest.mark.parametrize("malformed_consent", ["proceed", ["proceed"], 123])
 def test_malformed_consent_raises_consent_required_not_a_traceback(tmp_path, malformed_consent):
     """consent 가 잘못된 형태(문자열/리스트/숫자)여도 안내 메시지로 떨어진다 —
@@ -338,7 +389,8 @@ def test_consent_choice_must_be_proceed(tmp_path, choice):
 
 # ── ITEM 5(b): notified_at 자리표시자/빈 값은 통지의 증거가 아니다 ──
 
-@pytest.mark.parametrize("bad_notified_at", ["", None, "<ISO8601>", "<통지한 실제 시각 ISO8601>"])
+@pytest.mark.parametrize("bad_notified_at", ["", None, "<ISO8601>", "<통지한 실제 시각 ISO8601>",
+                                             "통지한 실제 시각 ISO8601"])
 def test_consent_rejects_placeholder_or_missing_notified_at(tmp_path, bad_notified_at):
     """Step 5-A 템플릿을 그대로 복사해 notified_at 을 자리표시자로 남기면 게이트를 통과할
     수 없다 — choice 만 "proceed" 여도, 실제로 통지했다는 증거가 되지 못한다."""

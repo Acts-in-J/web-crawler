@@ -22,7 +22,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 
-from profile_policy import distribution, ladder_rung
+from profile_policy import distribution, is_unrecognized_tool, ladder_rung
 from utils import sanitize_filename, setup_logger
 
 
@@ -63,6 +63,9 @@ def _is_real_timestamp(value) -> bool:
     거짓이면 consent 기록의 유일한 쓸모(실제로 통지했다는 증거)가 사라지므로, 여기서
     막는다. 형식 검증이 아니라 "명백한 자리표시자를 배제" 하는 최소한의 체크다 —
     실제 타임스탬프 문법을 강제하지는 않는다.
+
+    꺾쇠만 지우고 안의 문구는 그대로 둔 반쯤 지운 자리표시자("통지한 실제 시각 ISO8601")도
+    막는다 — "ISO8601" 이라는 문자열 자체가 실제 값에는 등장할 이유가 없는, 템플릿의 흔적이다.
     """
     if not isinstance(value, str):
         return False
@@ -70,6 +73,8 @@ def _is_real_timestamp(value) -> bool:
     if not stripped:
         return False
     if stripped.startswith("<") and stripped.endswith(">"):
+        return False
+    if "ISO8601" in stripped:
         return False
     return True
 
@@ -127,7 +132,10 @@ class DomainProfile:
         # (예: authenticated_browser)도 전부 "local" 로 묶인다. 그 셋은 이음매를 넘은 사건이
         # 아니므로 consent 를 요구하면 안 된다 — consent 는 "4단 이상 도구로 실제로 돌파했다"
         # 는 사실 하나만 기록한다.
-        if ladder_rung(profile) >= 4:
+        # 단, ladder_rung 은 '없는 값'(정보 없음)과 '있는데 모르는 값'(오타·신종·서술형)을
+        # 둘 다 0 으로 뭉갠다 — 후자는 이음매를 건넜는지 판단 불가라는 뜻이지 안전하다는 뜻이
+        # 아니다. is_unrecognized_tool 이 그 경우를 따로 잡아 게이트를 발화시킨다.
+        if ladder_rung(profile) >= 4 or is_unrecognized_tool(profile):
             consent = profile.get("consent")
             notified_at = consent.get("notified_at") if isinstance(consent, dict) else None
             consent_ok = (
@@ -138,8 +146,10 @@ class DomainProfile:
             if not consent_ok:
                 raise ConsentRequired(
                     f"{domain}: 이 프로필은 자동 접근 차단을 넘어선 방법(사다리 B, 4단 이상)을 "
-                    "기록하고 있습니다. 사용자에게 실제로 한 번 통지하고, 그 선택과 통지한 실제 "
-                    "시각을 consent 블록에 남긴 뒤 저장하세요 — "
+                    "기록하고 있거나, 어느 사다리 칸에도 해당하지 않는 fetcher_type/"
+                    "antibot_strategy 값을 쓰고 있어 이음매를 넘었는지 판별할 수 없습니다. "
+                    "사용자에게 실제로 한 번 통지하고, 그 선택과 통지한 실제 시각을 consent "
+                    "블록에 남긴 뒤 저장하세요 — "
                     '예: {"notified_at": "2026-08-20T14:30:00+09:00", "choice": "proceed"}. '
                     "<ISO8601> 같은 자리표시자나 빈 값은 유효하지 않습니다. "
                     "권한 근거를 적을 필요는 없습니다."
