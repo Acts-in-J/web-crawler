@@ -386,6 +386,7 @@ git diff --cached --name-only        # commit 직전 무엇이 올라가는지 �
 
 ## 참고 문서
 
+- `ACCEPTABLE_USE.md` — 이용 범위·사용자 책임·기여자 규칙
 - `CLAUDE.md` — 메인 에이전트 지시서 (양 host SSOT)
 - `AGENTS.md` — Codex 실행 계약 (최초 셋업 포함)
 - `.claude/skills/web-crawler/SKILL.md` — 워크플로우 (Step 1-A/5-A 게이트 포함)

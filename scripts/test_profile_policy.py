@@ -315,3 +315,37 @@ def test_new_bypass_profile_cannot_be_staged(tmp_path):
     finally:
         probe.unlink()
         target.rmdir()
+
+
+def test_no_tracked_profile_is_withheld():
+    """git 이 실제로 추적 중인 프로필 중에 미배포 판정이 섞여 있으면 안 된다.
+
+    다른 테스트들은 '분류기가 옳은가', '화이트리스트가 분류기와 맞는가' 를 본다.
+    이건 다른 질문이다 — **이 PR 이 지금 실제로 무엇을 배포하려 하는가.**
+    .gitignore 는 untracked 파일에만 작용하므로 `git add -f` 로 강제 추가됐거나
+    이미 추적 중인 프로필은 막지 못한다. 그 경우를 잡는 것은 이 검사뿐이다.
+    """
+    import json
+
+    listed = subprocess.run(
+        ["git", "ls-files", "fingerprints/*/profile.json"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    ).stdout.split()
+
+    offenders = []
+    for rel in listed:
+        path = REPO_ROOT / rel
+        if not path.exists():          # 인덱스엔 있고 디스크엔 없는 경우
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (ValueError, OSError):
+            offenders.append(f"{rel} (읽을 수 없음)")
+            continue
+        if not isinstance(data, dict) or not is_distributable(data):
+            offenders.append(rel)
+
+    assert offenders == [], (
+        f"미배포 판정 프로필이 git 에 추적되고 있습니다: {offenders}. "
+        "`git rm --cached <경로>` 로 인덱스에서 빼세요 — 파일은 디스크에 그대로 남습니다."
+    )
