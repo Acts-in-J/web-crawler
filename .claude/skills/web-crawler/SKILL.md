@@ -430,6 +430,25 @@ if verdict["blocked"]:
 
 > 📖 수집 실패 시 원인 진단은 `references/troubleshooting.md`를 참조한다.
 
+### 값이 그럴듯한가 (필수)
+
+건수와 null 비율만 보면 **광고를 상품으로 가져온 경우를 통과시킨다.** 자가치유 셀렉터는
+"못 찾겠다" 고 말하지 않고 늘 무언가를 반환하기 때문이다.
+
+```python
+from utils import validate_values
+
+issues = validate_values(results, {
+    "상품명": {"type": "str", "required": True, "max_empty_ratio": 0.1},
+    "가격":   {"type": "int", "required": True, "min": 1, "max": 100_000_000},
+})
+if issues:
+    logger.warning("값 검증 경고:\n" + "\n".join(issues))
+```
+
+- `adaptive=True` 로 요소를 **재탐색한 행**에는 플래그 컬럼을 남겨 엑셀에서 구분되게 한다.
+- 문제가 있으면 사용자에게 그대로 보고한다 — 조용히 진행하지 않는다.
+
 ---
 
 ## Step 5-A: 도메인 프로필 저장 (필수 게이트)

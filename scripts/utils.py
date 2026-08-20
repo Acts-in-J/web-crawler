@@ -328,3 +328,70 @@ def check_robots(url: str, user_agent: str = "*") -> dict:
     delay = parser.crawl_delay(user_agent)
     result["crawl_delay"] = float(delay) if delay is not None else None
     return result
+
+
+# ── 값 검증 — 자가치유를 쓰는 이상 선택이 아니다 ──
+# adaptive=True 는 "못 찾겠다" 고 말하지 않는다. 늘 무언가는 반환한다.
+# 지면이 개편돼 그 자리에 광고가 들어가면 광고를 가져와 엑셀에 '가격: 3,900원' 으로 꽂는다.
+# 최종 산출물이 사람이 읽는 엑셀이라 조용한 오답은 크래시보다 나쁘다.
+_TYPE_MAP = {"str": str, "int": int, "float": (int, float), "any": object}
+
+
+def validate_values(data: list[dict], schema: dict) -> list[str]:
+    """수집 값이 그럴듯한지 검사. 문제 목록을 반환(빈 리스트 = 통과).
+
+    schema: {"필드명": {"type": "str|int|float|any", "required": bool,
+                        "min": float|None, "max": float|None,
+                        "max_empty_ratio": float}}
+    """
+    issues = []
+    if not data:
+        return ["수집 데이터가 0건입니다 — 계속 시도하지 말고 원인을 확인하세요"]
+
+    total = len(data)
+    for field, rule in schema.items():
+        expected = _TYPE_MAP.get(rule.get("type", "any"), object)
+        values = [row.get(field) for row in data if isinstance(row, dict)]
+
+        if rule.get("required"):
+            missing = sum(1 for v in values if v is None)
+            if missing:
+                issues.append(f"필수 필드 '{field}' 가 {missing}/{total}건에서 누락됐습니다")
+
+        for i, value in enumerate(values):
+            if value is None:
+                continue
+            if expected is not object and not isinstance(value, expected):
+                issues.append(
+                    f"필드 '{field}' 타입 불일치 (row {i+1}): "
+                    f"{rule.get('type')} 를 기대했으나 {type(value).__name__}"
+                )
+                break       # 타입 문제는 한 번만 보고 — 전부 같은 원인이다
+
+        numeric = [v for v in values if isinstance(v, (int, float))]
+        low, high = rule.get("min"), rule.get("max")
+        if numeric and (low is not None or high is not None):
+            bad = [v for v in numeric
+                   if (low is not None and v < low) or (high is not None and v > high)]
+            if bad:
+                issues.append(
+                    f"필드 '{field}' 범위 이탈 {len(bad)}건 (예: {bad[0]}) — "
+                    f"허용 {low}~{high}"
+                )
+
+        empty = sum(1 for v in values if v is None or (isinstance(v, str) and not v.strip()))
+        limit = rule.get("max_empty_ratio")
+        if limit is not None and total and empty / total > limit:
+            issues.append(
+                f"필드 '{field}' 빈값 비율 {empty}/{total} ({empty/total:.0%}) 가 "
+                f"상한 {limit:.0%} 를 넘었습니다 — 셀렉터가 어긋났을 수 있습니다"
+            )
+
+        filled = [v for v in values if v not in (None, "")]
+        if len(filled) >= 10 and len(set(map(str, filled))) == 1:
+            issues.append(
+                f"필드 '{field}' 중복률 100% — {len(filled)}건이 전부 동일한 값입니다. "
+                "셀렉터가 고정 요소(광고·머리글)를 잡았을 수 있습니다"
+            )
+
+    return issues

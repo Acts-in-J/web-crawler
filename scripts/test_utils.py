@@ -380,3 +380,49 @@ def test_no_cap_by_default():
     for _ in range(10):
         limiter.wait()
     assert limiter.request_count == 10
+
+
+# ── S4: 값 검증 ──
+from utils import validate_values
+
+PRICE_SCHEMA = {
+    "상품명": {"type": "str", "required": True, "max_empty_ratio": 0.1},
+    "가격": {"type": "int", "required": True, "min": 1, "max": 100_000_000},
+}
+
+
+def test_valid_data_passes():
+    data = [{"상품명": "사과", "가격": 3900}, {"상품명": "배", "가격": 5000}]
+    assert validate_values(data, PRICE_SCHEMA) == []
+
+
+def test_missing_required_field():
+    issues = validate_values([{"상품명": "사과"}], PRICE_SCHEMA)
+    assert any("가격" in i for i in issues)
+
+
+def test_wrong_type():
+    issues = validate_values([{"상품명": "사과", "가격": "삼천구백원"}], PRICE_SCHEMA)
+    assert any("가격" in i and "타입" in i for i in issues)
+
+
+def test_out_of_range():
+    issues = validate_values([{"상품명": "사과", "가격": 0}], PRICE_SCHEMA)
+    assert any("범위" in i for i in issues)
+
+
+def test_empty_ratio_exceeded():
+    data = [{"상품명": "", "가격": 100} for _ in range(9)] + [{"상품명": "사과", "가격": 100}]
+    issues = validate_values(data, PRICE_SCHEMA)
+    assert any("빈값" in i for i in issues)
+
+
+def test_duplicate_ratio_flagged():
+    """전부 같은 값이면 셀렉터가 엉뚱한 고정 요소를 잡은 것이다."""
+    data = [{"상품명": "광고", "가격": 3900} for _ in range(20)]
+    issues = validate_values(data, PRICE_SCHEMA)
+    assert any("중복" in i for i in issues)
+
+
+def test_empty_dataset_is_reported():
+    assert validate_values([], PRICE_SCHEMA)
