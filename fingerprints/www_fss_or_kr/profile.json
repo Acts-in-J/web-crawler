@@ -1,5 +1,6 @@
 {
   "domain": "www.fss.or.kr",
+  "capability": "static",
   "fetcher_type": "Fetcher",
   "antibot_type": "none",
   "antibot_strategy": "none",

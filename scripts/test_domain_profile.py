@@ -88,3 +88,32 @@ def test_save_survives_ansi_encoded_existing_profile(tmp_path):
         '{"domain": "example.com", "notes": "한글 메모"}'.encode("cp949"))
     mgr.save("example.com", {"domain": "example.com", "fetcher_type": "Fetcher"})
     assert mgr.load("example.com")["fetcher_type"] == "Fetcher"
+
+
+# ── S3: capability SSOT ──
+from profile_policy import infer_capability
+
+
+def test_capability_field_wins():
+    assert infer_capability({"capability": "api", "fetcher_type": "Fetcher"}) == "api"
+
+
+def test_capability_inferred_from_fetcher_type():
+    """마이그레이션 호환 — capability 가 없어도 기존 프로필이 그대로 산다."""
+    assert infer_capability({"fetcher_type": "Fetcher"}) == "static"
+    assert infer_capability({"fetcher_type": "FetcherSession"}) == "api"
+    assert infer_capability({"fetcher_type": "DynamicFetcher"}) == "js_render"
+    assert infer_capability({"fetcher_type": "playwright_spa_intercept"}) == "session"
+    assert infer_capability({"fetcher_type": "chrome_cdp"}) == "session"
+
+
+def test_capability_unknown_returns_none():
+    assert infer_capability({"fetcher_type": "SomeNewThing"}) is None
+
+
+def test_all_tracked_profiles_declare_capability():
+    """마이그레이션이 끝났는지 — 배포되는 프로필은 전부 capability 를 갖는다."""
+    from profile_policy import is_distributable, load_all
+    missing = [name for name, p in load_all().items()
+               if is_distributable(p) and "capability" not in p]
+    assert missing == [], f"capability 필드가 없는 배포 프로필: {missing}"

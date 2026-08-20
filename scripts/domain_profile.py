@@ -3,9 +3,10 @@
 프로필 스키마:
 {
     "domain": "example.com",
-    "distribution": "public|local",       # 배포 가능 여부 선언 (scripts/profile_policy.py 참조)
+    "capability": "static|js_render|api|session",     # ★ SSOT — 능력 수준
+    "distribution": "public|local",                    # 선택 — 없으면 policy 가 자동 판정
     "distribution_reason": "선언 사유",     # distribution 이 있을 때만 의미 있음
-    "fetcher_type": "FetcherSession|Fetcher|StealthyFetcher|DynamicFetcher|chrome_cdp",
+    "fetcher_type": "FetcherSession|Fetcher|StealthyFetcher|DynamicFetcher|chrome_cdp",  # 파생 — 현재 엔진에서의 구현체
     "antibot_type": "none|cloudflare|akamai|other",   # 봇 차단 유형
     "antibot_strategy": "none|stealthy|chrome_cdp",    # 대응 전략
     "selectors": {"필드": "셀렉터"},
@@ -78,3 +79,13 @@ class DomainProfile:
         if not profile:
             return False
         return profile.get("antibot_type") == "akamai"
+
+    def capability(self, domain: str) -> str | None:
+        """도메인의 능력 수준(static|js_render|api|session). 프로필 없으면 None.
+
+        capability 필드가 SSOT 이고 fetcher_type 은 파생이다. 필드가 없는 옛 프로필은
+        fetcher_type 에서 역추론하므로 마이그레이션 없이도 읽힌다.
+        """
+        from profile_policy import infer_capability
+        profile = self.load(domain)
+        return infer_capability(profile) if profile else None

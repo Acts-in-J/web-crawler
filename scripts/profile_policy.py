@@ -177,3 +177,36 @@ def load_all() -> dict[str, dict]:
 def public_dirs() -> list[str]:
     """배포 대상 디렉터리명 정렬 목록."""
     return sorted(name for name, profile in load_all().items() if is_distributable(profile))
+
+
+# ── capability — 능력 수준이 SSOT, 구체 fetcher 는 파생 ──
+# fetcher_type 에는 특정 라이브러리의 클래스 이름이 박혀 있고, 그 이름은 이미 한 번 바뀐
+# 전력이 있다(PlayWrightFetcher -> DynamicFetcher). 엔진이 바뀌어도 프로필이 살아남게 한다.
+CAPABILITIES = ("static", "js_render", "api", "session")
+
+_FETCHER_TO_CAPABILITY = {
+    "fetcher": "static",
+    "plainget": "static",
+    "static": "static",
+    "fetchersession": "api",
+    "plainsession": "api",
+    "apisession": "api",
+    "api": "api",
+    "dynamicfetcher": "js_render",
+    "playwright": "session",
+    "playwrightspaintercept": "session",
+    "playwrightintercept": "session",
+    "authenticatedbrowser": "session",
+    "cdp": "session",
+    "chromecdp": "session",
+    "stealthy": "js_render",
+    "stealthyfetcher": "js_render",
+}
+
+
+def infer_capability(profile: dict) -> str | None:
+    """capability 필드 우선, 없으면 fetcher_type 에서 역추론. 모르면 None."""
+    declared = profile.get("capability")
+    if declared in CAPABILITIES:
+        return declared
+    return _FETCHER_TO_CAPABILITY.get(_norm(profile.get("fetcher_type")))

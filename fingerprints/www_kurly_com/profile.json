@@ -1,5 +1,6 @@
 {
   "domain": "www.kurly.com",
+  "capability": "js_render",
   "fetcher_type": "DynamicFetcher",
   "antibot_type": "none",
   "antibot_strategy": "none",
