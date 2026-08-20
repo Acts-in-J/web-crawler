@@ -64,6 +64,7 @@ python scripts\preflight.py              # 검증: core / agent-browser 분리 P
 
 ## 안전 — 하드룰 (위반 금지)
 
+- **자동 접근 차단을 만나면 통지 후 사용자 선택** — CAPTCHA·WAF·봇 탐지는 법적으로 같은 보호조치다. 어느 쪽이든 **자동으로 넘어가지 않고 한 번 알리고 사용자가 고른다**. '진행' 이면 그대로 간다 — 근거를 묻지도 검증하지도 않는다. 이미 `consent` 기록이 있는 프로필은 통지가 면제된다(sticky). 상세는 `.codex/skills/web-crawler/SKILL.md` Step 3 "이음매 통지 게이트".
 - **CAPTCHA 자동 우회 금지** — reCAPTCHA/hCaptcha 등이 뜨면 사용자에게 보고 후 중단한다.
 - **로그인 자격증명 저장 금지** — ID/PW를 코드·메모리·파일에 저장하지 않는다. 사용자가 직접 로그인 → 쿠키만 추출(`output/<도메인>/cookies.json`, `.gitignore`가 차단).
 - **robots.txt 제한** 발견 시(`Disallow: /` 또는 대상 경로 차단) 진행 여부를 사용자에게 묻는다.

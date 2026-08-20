@@ -88,8 +88,11 @@ profile_mgr.save(domain, {
 | X(트위터) 단일 트윗 | `cdn.syndication.twimg.com` oEmbed | |
 | Reddit | 서브레딧/스레드 `.rss` (Atom) | |
 | Hacker News | Firebase JSON API | |
-| 네이버 검색·금융 | 비공식 JSON 엔드포인트 | 도메인 프로필 참조 |
 | 일반 사이트 (SPA 렌더·단발 본문 추출) | `https://r.jina.ai/<URL>` | 정찰·단발 본문용, 대량 수집엔 부적합 |
+
+> **비공식 내부 엔드포인트는 Phase 0 이 아니다.** 사이트가 문서화하지 않은 JSON 엔드포인트는
+> 공인 경로가 아니라 **사다리 2단(숨은 API)** 이다 — 정찰로 찾아내는 것이고, 약관이 그 사용을
+> 금지하는지는 별도로 확인해야 한다. 이 표는 제공자가 명시적으로 여는 경로만 담는다.
 
 **판정:** Phase 0로 데이터가 충분히 나오면 → 정찰 스킵, Step 3 분류 트리도 건너뛰고 수집(Step 4)으로. 안 되면 → Step 2 정찰로 정상 진행.
 
