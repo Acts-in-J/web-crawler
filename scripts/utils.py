@@ -122,6 +122,13 @@ _PII_COLUMN_HINTS = (
     "reviewer", "member", "buyer", "customer", "profile",
 )
 
+# 집계·파생 컬럼은 사람이 아니라 사람에 대한 '수치' 다.
+# `작성자` 는 개인이지만 `작성자수` 는 개인이 아니다 — 어근이 같아도 다른 것이다.
+# 이 구분을 안 하면 경고가 `회원수` 같은 데서 울리고, 그러면 진짜 경고까지 함께 무시된다.
+_PII_AGGREGATE_SUFFIXES = (
+    "수", "count", "cnt", "num", "total", "score", "policy", "rate", "ratio", "avg", "sum", "id_policy",
+)
+
 
 def detect_pii(data: list[dict]) -> list[str]:
     """수집 데이터에서 PII(개인식별정보)를 감지 — 값 패턴과 컬럼명 양쪽을 본다."""
@@ -133,6 +140,11 @@ def detect_pii(data: list[dict]) -> list[str]:
     columns = {key for item in data[:50] if isinstance(item, dict) for key in item}
     for column in sorted(columns):
         lowered = str(column).lower()
+        # 집계·파생 접미사로 끝나면 사람이 아니라 사람에 대한 수치다 — 건너뛴다.
+        # endswith 여야 한다. substring 검사면 '수신자' 처럼 접미사 글자로 '시작'하는
+        # 진짜 개인 컬럼까지 잘못 걸러낸다.
+        if lowered.endswith(_PII_AGGREGATE_SUFFIXES):
+            continue
         for hint in _PII_COLUMN_HINTS:
             if hint in lowered:
                 warnings.append(

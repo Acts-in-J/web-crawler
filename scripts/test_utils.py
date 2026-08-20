@@ -293,6 +293,44 @@ def test_pii_still_detects_values():
     assert detect_pii([{"메모": "문의는 a@b.com 으로"}])
 
 
+# ── P2-2 픽스: 집계·파생 컬럼 오탐 제거 ──
+@pytest.mark.parametrize("column", [
+    "작성자", "이름", "닉네임", "아이디", "회원명", "구매자",
+    "author", "writer", "nickname", "user_name", "reviewer", "member",
+])
+def test_pii_still_flags_genuine_identity_columns(column):
+    """집계 접미사 제외 로직을 넣은 뒤에도 진짜 개인 컬럼은 그대로 잡혀야 한다 — 회귀 방지."""
+    warnings = detect_pii([{column: "값"}])
+    assert warnings, f"컬럼명 '{column}' 을 감지하지 못했습니다"
+
+
+@pytest.mark.parametrize("column", [
+    "회원수", "구매자수", "작성자수",
+    "buyer_count", "author_count", "member_count",
+    "customer_satisfaction_score", "profile_view_count", "username_policy",
+])
+def test_pii_ignores_aggregate_columns(column):
+    """어근이 같아도 집계·파생 컬럼은 사람이 아니라 사람에 대한 수치다."""
+    warnings = detect_pii([{column: "x"}])
+    assert warnings == [], f"집계 컬럼 '{column}' 이 잘못 감지되었습니다: {warnings}"
+
+
+@pytest.mark.parametrize("column", [
+    "상품명", "가격", "제목", "내용", "카테고리", "브랜드", "평점", "등록일",
+])
+def test_pii_still_ignores_unrelated_columns(column):
+    """집계 접미사 제외 로직이 무관한 컬럼에 영향을 주지 않는다."""
+    assert detect_pii([{column: "x"}]) == []
+
+
+def test_pii_flags_team_members_as_group_of_people():
+    """`team_members` 는 집계 접미사로 끝나지 않고, 개인(들)을 직접 가리키는 컬럼이다 —
+    `member_count` 처럼 사람에 대한 숫자가 아니라 원본 개인정보(이름 목록 등)일 수 있으므로
+    계속 감지 대상으로 둔다 (팀장이 이 판단을 명시적으로 요청함 — 어느 쪽이든 근거를 남길 것)."""
+    warnings = detect_pii([{"team_members": "Alice, Bob"}])
+    assert warnings, "team_members 는 사람 목록을 가리키므로 감지되어야 합니다"
+
+
 # ── P2-3: 부담 상한 ──
 from utils import BudgetExceeded, RateLimiter
 
