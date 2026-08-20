@@ -30,7 +30,7 @@ def test_collect_domains_uses_domain_field(tmp_path, monkeypatch):
     monkeypatch.setattr(sdl, "FINGERPRINTS", tmp_path)
     (tmp_path / "example_com").mkdir()
     (tmp_path / "example_com" / "profile.json").write_text(
-        json.dumps({"domain": "example.com"}), encoding="utf-8"
+        json.dumps({"domain": "example.com", "fetcher_type": "Fetcher"}), encoding="utf-8"
     )
     assert sdl.collect_domains() == ["example.com"]
 
@@ -39,7 +39,9 @@ def test_collect_domains_falls_back_to_dirname(tmp_path, monkeypatch):
     """domain 필드가 비어도 조용히 누락되지 않고 디렉터리명으로 나타난다."""
     monkeypatch.setattr(sdl, "FINGERPRINTS", tmp_path)
     (tmp_path / "fallback_site").mkdir()
-    (tmp_path / "fallback_site" / "profile.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "fallback_site" / "profile.json").write_text(
+        json.dumps({"fetcher_type": "Fetcher"}), encoding="utf-8"
+    )
     assert sdl.collect_domains() == ["fallback_site"]
 
 
@@ -47,7 +49,7 @@ def test_collect_domains_skips_broken_json(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sdl, "FINGERPRINTS", tmp_path)
     (tmp_path / "ok_com").mkdir()
     (tmp_path / "ok_com" / "profile.json").write_text(
-        json.dumps({"domain": "ok.com"}), encoding="utf-8"
+        json.dumps({"domain": "ok.com", "fetcher_type": "Fetcher"}), encoding="utf-8"
     )
     (tmp_path / "broken_com").mkdir()
     (tmp_path / "broken_com" / "profile.json").write_text("{not json", encoding="utf-8")
@@ -61,7 +63,7 @@ def test_collect_domains_dedupes(tmp_path, monkeypatch):
     for name in ("a_com", "b_com"):
         (tmp_path / name).mkdir()
         (tmp_path / name / "profile.json").write_text(
-            json.dumps({"domain": "same.com"}), encoding="utf-8"
+            json.dumps({"domain": "same.com", "fetcher_type": "Fetcher"}), encoding="utf-8"
         )
     assert sdl.collect_domains() == ["same.com"]
 

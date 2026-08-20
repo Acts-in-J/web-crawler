@@ -22,6 +22,8 @@ import json
 import sys
 from pathlib import Path
 
+from profile_policy import is_distributable, public_dirs
+
 # scripts/sync_domain_list.py: parents[0]=scripts [1]=repo root
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FINGERPRINTS = REPO_ROOT / "fingerprints"
@@ -29,6 +31,9 @@ FINGERPRINTS = REPO_ROOT / "fingerprints"
 BEGIN = "<!-- BEGIN GENERATED: domain-list -->"
 END = "<!-- END GENERATED: domain-list -->"
 REGEN_HINT = "<!-- 이 블록은 scripts/sync_domain_list.py 가 생성한다. 직접 수정하지 말 것. -->"
+
+GITIGNORE_BEGIN = "# BEGIN GENERATED: public-profiles"
+GITIGNORE_END = "# END GENERATED: public-profiles"
 
 
 def collect_domains():
@@ -46,6 +51,8 @@ def collect_domains():
         except (json.JSONDecodeError, OSError) as exc:
             print(f"[WARN] 읽기 실패, 건너뜀: {profile} ({exc})", file=sys.stderr)
             continue
+        if not is_distributable(data):
+            continue        # 미배포 프로필은 문서 목록에도 나오지 않는다
         domain = (data.get("domain") or "").strip() or profile.parent.name
         domains.append(domain)
     return sorted(set(domains))
@@ -69,6 +76,34 @@ TARGETS = (
     (REPO_ROOT / "CLAUDE.md", render_claude),
     (REPO_ROOT / "README.md", render_readme),
 )
+
+
+def render_gitignore_whitelist():
+    """배포 대상 프로필만 whitelist 하는 블록 본문."""
+    lines = []
+    for name in public_dirs():
+        lines.append(f"!fingerprints/{name}/profile.json")
+        if (FINGERPRINTS / name / "recipe.md").exists():
+            lines.append(f"!fingerprints/{name}/recipe.md")
+    return "\n".join(lines)
+
+
+def sync_gitignore(check_only):
+    """.gitignore 의 whitelist 블록을 재생성. 변경됐으면 True."""
+    path = REPO_ROOT / ".gitignore"
+    text = path.read_text(encoding="utf-8")
+    start = text.find(GITIGNORE_BEGIN)
+    end = text.find(GITIGNORE_END)
+    if start == -1 or end == -1:
+        raise RuntimeError(f".gitignore 에 마커가 없습니다 ({GITIGNORE_BEGIN})")
+    head = text[: start + len(GITIGNORE_BEGIN)]
+    tail = text[end:]
+    updated = f"{head}\n{render_gitignore_whitelist()}\n{tail}"
+    if updated == text:
+        return False
+    if not check_only:
+        path.write_text(updated, encoding="utf-8")
+    return True
 
 
 def replace_block(text, body, path):
@@ -100,10 +135,13 @@ def build(check_only):
         if not check_only:
             path.write_text(updated, encoding="utf-8")
 
+    if sync_gitignore(check_only):
+        stale.append(".gitignore")
+
     if check_only:
         if stale:
             print(
-                f"[FAIL] 도메인 목록이 어긋났습니다 ({', '.join(stale)}). "
+                f"[FAIL] 생성 블록이 어긋났습니다 ({', '.join(stale)}). "
                 "`python scripts/sync_domain_list.py` 를 실행하세요.",
                 file=sys.stderr,
             )

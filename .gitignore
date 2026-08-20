@@ -2,12 +2,29 @@
 output/
 crawl_data/
 
-# Fingerprints — ignore everything by default, whitelist only shareable recipe metadata
+# fingerprints — default-deny.
+# 아래 화이트리스트는 scripts/sync_domain_list.py 가 생성한다. 직접 수정하지 말 것.
+# 배포 대상 판정은 scripts/profile_policy.py 가 한다(사다리 B 도구로 해결한 프로필은 제외).
 fingerprints/**
 !fingerprints/
 !fingerprints/*/
-!fingerprints/*/profile.json
-!fingerprints/*/recipe.md
+# BEGIN GENERATED: public-profiles
+!fingerprints/books_toscrape_com/profile.json
+!fingerprints/builtini_co_kr/profile.json
+!fingerprints/celimax_co_kr/profile.json
+!fingerprints/data_seoul_go_kr/profile.json
+!fingerprints/db_itkc_or_kr/profile.json
+!fingerprints/g2b_go_kr/profile.json
+!fingerprints/g2b_go_kr/recipe.md
+!fingerprints/guesskorea_com/profile.json
+!fingerprints/made-in-china_com/profile.json
+!fingerprints/wanted_co_kr/profile.json
+!fingerprints/www_11st_co_kr/profile.json
+!fingerprints/www_fss_or_kr/profile.json
+!fingerprints/www_gsmarena_com/profile.json
+!fingerprints/www_k-startup_go_kr/profile.json
+!fingerprints/www_kurly_com/profile.json
+# END GENERATED: public-profiles
 
 # Python
 __pycache__/

@@ -183,3 +183,63 @@ def test_expected_public_count():
         "www_k-startup_go_kr",
         "www_kurly_com",
     ]
+
+
+# ── .gitignore default-deny ──
+import subprocess
+
+from profile_policy import REPO_ROOT, load_all
+
+GITIGNORE = REPO_ROOT / ".gitignore"
+BEGIN = "# BEGIN GENERATED: public-profiles"
+END = "# END GENERATED: public-profiles"
+
+
+def _whitelist_block() -> list[str]:
+    text = GITIGNORE.read_text(encoding="utf-8")
+    body = text[text.index(BEGIN) + len(BEGIN):text.index(END)]
+    return [line.strip() for line in body.splitlines() if line.strip().startswith("!")]
+
+
+def test_whitelist_block_exists():
+    assert BEGIN in GITIGNORE.read_text(encoding="utf-8")
+
+
+def test_whitelist_matches_classifier():
+    """생성 블록이 분류기와 어긋나면 sync 를 돌려야 한다."""
+    listed = {line.split("/")[1] for line in _whitelist_block()}
+    assert listed == set(public_dirs())
+
+
+def test_no_blanket_profile_whitelist():
+    """default-allow 로 되돌아가지 않았는지 — 이 한 줄이 정책 전체를 무력화한다."""
+    for line in GITIGNORE.read_text(encoding="utf-8").splitlines():
+        assert line.strip() != "!fingerprints/*/profile.json"
+        assert line.strip() != "!fingerprints/*/recipe.md"
+
+
+def test_credential_blocks_come_after_whitelist():
+    """last-match-wins — 자격증명 재차단이 whitelist 뒤에 있어야 한다."""
+    lines = [l.strip() for l in GITIGNORE.read_text(encoding="utf-8").splitlines()]
+    assert lines.index("**/cookies*.json") > lines.index(END)
+    assert lines.index("**/auth*.json") > lines.index(END)
+    assert lines.index("**/*token*.json") > lines.index(END)
+    assert lines.index("**/*secret*") > lines.index(END)
+
+
+def test_new_bypass_profile_cannot_be_staged(tmp_path):
+    """default-deny 실증 — 새 우회 프로필은 인덱스 진입 자체가 막혀야 한다."""
+    target = REPO_ROOT / "fingerprints" / "zz_policy_probe_com"
+    target.mkdir(parents=True, exist_ok=True)
+    probe = target / "profile.json"
+    probe.write_text('{"domain": "zz-probe.example", "fetcher_type": "chrome_cdp"}',
+                     encoding="utf-8")
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", str(probe.relative_to(REPO_ROOT))],
+            cwd=REPO_ROOT, capture_output=True,
+        )
+        assert result.returncode == 0, "새 우회 프로필이 gitignore 에 막히지 않습니다"
+    finally:
+        probe.unlink()
+        target.rmdir()
