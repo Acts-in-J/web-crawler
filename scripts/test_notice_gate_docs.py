@@ -50,3 +50,33 @@ def test_captcha_rule_is_layered_with_waf():
     text = CLAUDE_MD.read_text(encoding="utf-8")
     assert "CAPTCHA 자동 풀이 금지" in text
     assert "CAPTCHA·WAF·봇 탐지는 법적으로 같은 보호조치" in text
+
+
+def test_profile_reuse_notice_is_conditional_on_consent():
+    """프로필이 있다는 사실만으로 통지를 면제하면 안 된다.
+
+    한때 이 파일은 재사용 분기에 무조건 면제를 줬고, 그 문구가 literal `(통지 없음)` 이었다 —
+    즉 '통지' 라는 단어를 포함한 채로 게이트가 꺼져 있었다. 그래서 단어 존재 검사로는 못 잡는다.
+    consent 기록 유무를 조건으로 건다는 **구조**를 확인한다.
+    """
+    text = CLAUDE_MD.read_text(encoding="utf-8")
+    assert "기록이 없으면" in text, "프로필 재사용 면제가 consent 기록 유무를 조건으로 걸지 않는다"
+    assert "이번이 최초 통과" in text
+
+
+def test_softblock_returns_to_the_gate():
+    """차단 감지가 이음매를 건너뛰고 상위 티어로 직행하면 안 된다.
+
+    Task 10 이 이 파일에서 같은 모양의 경로를 세 곳 발견했다 — 감지 직후 라우팅을 미리 확정해
+    게이트로 돌아가지 않는 형태. 전부 '통지' 라는 단어는 근처에 있었다.
+    """
+    text = SKILL.read_text(encoding="utf-8")
+    assert "이음매 통지 게이트로 돌아간다" in text, (
+        "소프트블록/차단 감지 경로가 게이트로 복귀하라고 지시하지 않는다"
+    )
+
+
+def test_recon_failure_returns_to_the_gate():
+    """정찰 단계 실패도 게이트를 거친다 — 한때 여기서 바로 CDP 로 갔다."""
+    text = SKILL.read_text(encoding="utf-8")
+    assert "정찰 단계에서도 사다리 B 진입은 사용자 확인을 거친다" in text
