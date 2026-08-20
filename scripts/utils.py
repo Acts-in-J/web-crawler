@@ -361,7 +361,12 @@ def validate_values(data: list[dict], schema: dict) -> list[str]:
 
     schema: {"필드명": {"type": "str|int|float|any", "required": bool,
                         "min": float|None, "max": float|None,
-                        "max_empty_ratio": float}}
+                        "max_empty_ratio": float,
+                        "allow_uniform": bool}}
+
+    allow_uniform=True 인 필드는 전부 같은 값이어도 중복률 경고를 내지 않는다 —
+    카테고리·플래그·정액 배송비처럼 균일한 게 정상인 필드에 쓴다. 이 필드도 타입/범위/
+    필수/빈값 검사는 그대로 받는다 — 면제되는 건 중복률 검사 하나뿐이다.
     """
     issues = []
     if not data:
@@ -373,9 +378,18 @@ def validate_values(data: list[dict], schema: dict) -> list[str]:
         values = [row.get(field) for row in data if isinstance(row, dict)]
 
         if rule.get("required"):
-            missing = sum(1 for v in values if v is None)
-            if missing:
-                issues.append(f"필수 필드 '{field}' 가 {missing}/{total}건에서 누락됐습니다")
+            # "필수" 는 값이 실제로 있어야 한다는 뜻이다 — 빈 문자열은 값이 아니다.
+            # 키가 아예 없는 경우(누락)와 셀렉터는 맞았는데 텍스트를 못 가져온 경우(빈 문자열)는
+            # 원인이 다르므로 메시지를 나눠 알린다.
+            absent = sum(1 for v in values if v is None)
+            empty_str = sum(1 for v in values if isinstance(v, str) and not v.strip())
+            if absent:
+                issues.append(f"필수 필드 '{field}' 가 {absent}/{total}건에서 누락됐습니다")
+            if empty_str:
+                issues.append(
+                    f"필수 필드 '{field}' 가 {empty_str}/{total}건에서 빈 문자열입니다 — "
+                    "값은 있으나 비어 있습니다(셀렉터는 매칭됐지만 텍스트를 못 가져왔을 수 있습니다)"
+                )
 
         for i, value in enumerate(values):
             if value is None:
@@ -405,6 +419,12 @@ def validate_values(data: list[dict], schema: dict) -> list[str]:
                 f"필드 '{field}' 빈값 비율 {empty}/{total} ({empty/total:.0%}) 가 "
                 f"상한 {limit:.0%} 를 넘었습니다 — 셀렉터가 어긋났을 수 있습니다"
             )
+
+        # 균일한 것이 정상인 필드도 있다 — 카테고리, 플래그, 정액 배송비.
+        # 그런 필드까지 경고하면 이 검사가 노이즈가 되고, 정작 셀렉터가 광고에 붙은 날
+        # 아무도 읽지 않는다. 스키마 작성자가 명시적으로 면제할 수 있게 한다.
+        if rule.get("allow_uniform"):
+            continue        # 중복률 검사만 건너뛴다 — 나머지 검사는 이미 위에서 적용됐다
 
         filled = [v for v in values if v not in (None, "")]
         if len(filled) >= 10 and len(set(map(str, filled))) == 1:

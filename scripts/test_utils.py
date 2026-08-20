@@ -463,3 +463,64 @@ def test_duplicate_ratio_flagged():
 
 def test_empty_dataset_is_reported():
     assert validate_values([], PRICE_SCHEMA)
+
+
+# ── S4 fix round 1: ITEM 1 — allow_uniform 면제 ──
+UNIFORM_SCHEMA = {
+    "카테고리": {"type": "str", "allow_uniform": True, "max_empty_ratio": 0.1},
+}
+
+
+def test_uniform_column_flags_without_opt_out():
+    """카테고리처럼 균일해도 되는 필드조차, 면제를 안 걸면 여전히 경고한다 — 기본 동작 확인용."""
+    data = [{"카테고리": "과일"} for _ in range(20)]
+    issues = validate_values(data, {"카테고리": {"type": "str"}})
+    assert any("중복" in i for i in issues)
+
+
+def test_uniform_column_clean_with_opt_out():
+    """allow_uniform=True 면 20건이 전부 같은 카테고리여도 조용하다."""
+    data = [{"카테고리": "과일"} for _ in range(20)]
+    assert validate_values(data, UNIFORM_SCHEMA) == []
+
+
+def test_allow_uniform_only_exempts_the_duplicate_check():
+    """allow_uniform 은 중복률 검사만 면제한다 — 같은 필드의 다른 검사는 그대로 걸려야 한다."""
+    schema = {
+        "카테고리": {"type": "str", "required": True, "max_empty_ratio": 0.1,
+                    "allow_uniform": True},
+    }
+    data = [{"카테고리": ""} for _ in range(20)]
+    issues = validate_values(data, schema)
+    assert any("빈" in i for i in issues)          # 빈값 관련 검사는 여전히 걸린다
+    assert not any("중복" in i for i in issues)     # 중복률 검사만 조용하다
+
+
+# ── S4 fix round 1: ITEM 2 — required 가 빈 문자열도 누락으로 본다 ──
+def test_required_flags_all_empty_strings_without_max_empty_ratio():
+    """max_empty_ratio 를 안 걸어도, required=True 면 빈 문자열만 있는 필드는 잡혀야 한다."""
+    data = [{"상품명": ""} for _ in range(10)]
+    schema = {"상품명": {"type": "str", "required": True}}
+    issues = validate_values(data, schema)
+    assert issues
+    assert any("상품명" in i for i in issues)
+
+
+def test_required_treats_whitespace_only_as_empty():
+    data = [{"상품명": "   "} for _ in range(10)]
+    schema = {"상품명": {"type": "str", "required": True}}
+    issues = validate_values(data, schema)
+    assert issues
+
+
+def test_required_passes_when_genuinely_populated():
+    """중복률 검사와 뒤섞이지 않도록 값을 다양하게 둔다 — required 단독 동작만 본다."""
+    data = [{"상품명": f"상품{i}"} for i in range(10)]
+    schema = {"상품명": {"type": "str", "required": True}}
+    assert validate_values(data, schema) == []
+
+
+def test_required_missing_key_still_flagged():
+    """기존 None 기반 케이스(키 자체가 없음)는 그대로 잡힌다 — 회귀 방지."""
+    issues = validate_values([{"상품명": "사과"}], PRICE_SCHEMA)
+    assert any("가격" in i for i in issues)
