@@ -40,7 +40,10 @@ class DomainProfile:
 
     def save(self, domain: str, profile: dict):
         profile = dict(profile)   # 호출자의 dict 를 건드리지 않는다
-        existing = self.load(domain) or {}
+        try:
+            existing = self.load(domain) or {}
+        except (json.JSONDecodeError, OSError):
+            existing = {}       # 기존 파일이 깨졌어도 저장은 진행한다 — 수집 성공 후 게이트에서 죽으면 안 된다
         for field in STICKY_FIELDS:
             if field not in profile and field in existing:
                 profile[field] = existing[field]
@@ -55,7 +58,7 @@ class DomainProfile:
         filepath = os.path.join(self.base_dir, sanitize_filename(domain), "profile.json")
         if not os.path.exists(filepath):
             return None
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, "r", encoding="utf-8-sig") as f:
             return json.load(f)
 
     def exists(self, domain: str) -> bool:

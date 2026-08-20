@@ -50,6 +50,19 @@ def test_authenticated_browser_is_not_auto_published():
                          "antibot_strategy": "authenticated_browser"}) == "local"
 
 
+def test_withheld_tool_cannot_be_rescued_by_declaration():
+    """'알고서 뺀 것' 은 '모르는 것' 과 다르다 — 선언 한 줄로 풀리면 안 된다."""
+    assert distribution({"fetcher_type": "Playwright",
+                         "antibot_strategy": "authenticated_browser",
+                         "distribution": "public"}) == "local"
+
+
+def test_unknown_tool_can_still_be_rescued():
+    """미상은 여전히 구제 가능하다 — 그게 rung 0 과 WITHHELD 의 차이다."""
+    assert distribution({"fetcher_type": "SomeInternalHelper",
+                         "distribution": "public"}) == "public"
+
+
 # ── distribution ──
 def test_ladder_a_is_public():
     assert distribution({"fetcher_type": "FetcherSession"}) == "public"

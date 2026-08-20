@@ -35,7 +35,7 @@ LADDER_A_TOOLS = {
     "playwrightspaintercept": 3,
     "playwrightintercept": 3,
     # authenticated_browser 는 의도적으로 넣지 않는다 — 우회는 아니지만 자격증명 수집은
-    # ToS 노출이 가장 큰 범주다. rung 0 으로 떨어뜨려 명시 선언 없이는 배포되지 않게 한다.
+    # ToS 노출이 가장 큰 범주다. 아래 WITHHELD_TOOLS 로 보내 명시 선언으로도 풀리지 않게 한다.
 }
 
 LADDER_B_TOOLS = {
@@ -52,6 +52,13 @@ LADDER_B_TOOLS = {
 # '전략 없음' 을 뜻하는 값들 — 미상(unknown)과 구분해야 한다.
 # 'none' 은 "안티봇 대응이 필요 없었다" 는 정보이고, 미상은 "모르겠다" 다. 취급이 다르다.
 _NEUTRAL = {"", "none", "null", "na"}
+
+# 우회는 아니지만 자동 배포 대상도 아닌 것들.
+# rung 0("모르겠다")과 구분해야 한다 — 이건 '모르는' 게 아니라 '알고서 빼기로 한' 것이고,
+# 따라서 distribution: "public" 선언으로도 풀리지 않는다.
+WITHHELD_TOOLS = {
+    "authenticatedbrowser",   # 자격증명 수집은 ToS 노출이 가장 큰 범주다
+}
 
 # 읽기 실패한 프로필에 넣는 표식 — 어떤 도구 목록에도 없으므로 ladder_rung 이 0(미상)을 낸다
 UNREADABLE = "__unreadable__"
@@ -97,6 +104,15 @@ def ladder_rung(profile: dict) -> int:
     return max(rungs) if rungs else 0
 
 
+def is_withheld_tool(profile: dict) -> bool:
+    """명시적으로 자동 배포에서 제외하기로 한 도구를 쓰는가."""
+    for field in _FIELDS:
+        raw = profile.get(field)
+        if isinstance(raw, str) and _norm(raw) in WITHHELD_TOOLS:
+            return True
+    return False
+
+
 def distribution(profile: dict) -> str:
     """"public" | "local".
 
@@ -107,6 +123,9 @@ def distribution(profile: dict) -> str:
     declared = profile.get("distribution")
     if declared == "local":
         return "local"
+
+    if is_withheld_tool(profile):
+        return "local"          # 선언으로 풀 수 없다
 
     rung = ladder_rung(profile)
     if declared == "public" and rung <= 3:
