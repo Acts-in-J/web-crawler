@@ -110,7 +110,7 @@ profile_mgr.save(domain, {
     "domain": domain,
     "fetcher_type": "<yt-dlp|RSS|oEmbed|Jina|Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체. 앞 4개는 Phase 0 공인 우회로
     "antibot_type": "<none|cloudflare|akamai|naver_antibot|other>",
-    "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
+    "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
     "site_type": "<static|csr|api|spa_session|akamai>",
     "selectors": {...},
     "pagination": {...},
