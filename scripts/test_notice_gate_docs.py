@@ -282,17 +282,25 @@ def test_safety_rules_warn_about_legal_risk_without_refusing(path, start, end, d
             "위험은 알리고, 진행 여부는 사용자가 정합니다"
         )
 
-    for word in _RISK_CATEGORY_WORDS:
-        assert word in section, (
-            f"{path.name} 의 안전 규칙 절에서 위험 범주 '{word}' 가 사라졌습니다 — "
-            "이 규칙의 값은 요청이 어떤 종류의 위험을 안고 있는지 알려주는 데 있습니다. "
-            "범주를 지우면 층위 재배치가 아니라 삭제가 됩니다"
-        )
-
-    assert decision_phrase in section, (
+    # 범주는 **경고 규칙 그 블록 안에** 있어야 한다. 절 어딘가에 있기만 하면 된다고 검사하면
+    # README 에서 검사가 헛돈다 — 그 절에는 `재배포` 가 두 번 나오고(경고 bullet 과 무관한
+    # 수집 후 이용 bullet), 정작 경고 규칙에서 범주를 지워도 다른 bullet 이 그린을 유지시킨다.
+    # 회귀를 막으려고 쓴 테스트가 회귀를 통과시키는 셈이라, 절이 아니라 블록으로 좁힌다.
+    warning_block = next(
+        (block for block in _logical_blocks(section) if decision_phrase in block), None
+    )
+    assert warning_block is not None, (
         f"{path.name} 의 안전 규칙 절이 '{decision_phrase}' 라고 말하지 않습니다 — "
         "경고 다음에 오는 것은 심사가 아니라 사용자의 선택입니다"
     )
+
+    for word in _RISK_CATEGORY_WORDS:
+        assert word in warning_block, (
+            f"{path.name} 의 경고 규칙에서 위험 범주 '{word}' 가 사라졌습니다:\n"
+            f"    {warning_block}\n"
+            "이 규칙의 값은 요청이 어떤 종류의 위험을 안고 있는지 알려주는 데 있습니다. "
+            "범주를 지우면 층위 재배치가 아니라 삭제가 됩니다"
+        )
 
 
 def test_acceptable_use_does_not_speak_for_the_agent():
