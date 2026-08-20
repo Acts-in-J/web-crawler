@@ -107,13 +107,20 @@ def test_e2e_escalation_chain():
 
     quotes.toscrape.com/js/ 는 JS 렌더링 필요 → Fetcher 부분 실패 → 에스컬레이션.
     """
-    from scrapling.fetchers import Fetcher, StealthyFetcher, DynamicFetcher
+    from scrapling.fetchers import DynamicFetcher
+
+    from utils import plain_get, plain_session
 
     logger = setup_logger("e2e_phase3_escalation")
 
+    def _session_tier(url):
+        with plain_session() as session:
+            return session.get(url)
+
+    # 사다리 A 전용 — StealthyFetcher(5단)는 통지 게이트 뒤에 있으므로 자동 체인에 없다
     FETCHER_CHAIN = [
-        ("Fetcher", lambda url: Fetcher().get(url)),
-        ("StealthyFetcher", lambda url: StealthyFetcher().fetch(url, headless=True)),
+        ("plain_get", plain_get),
+        ("plain_session", _session_tier),
         ("DynamicFetcher", lambda url: DynamicFetcher().fetch(url, network_idle=True)),
     ]
 

@@ -59,7 +59,9 @@ data = resp.json()   # dict | list — Fetcher 응답에도 .json() 메서드 �
 
 ### 주의사항
 
-- `Fetcher.configure()` 사용 권장 (기존 Fetcher(follow_redirects=True) 방식은 deprecated, v0.3 제거 예정)
+> ⚠️ `Fetcher.configure()` 는 **파서 전용**이다. `impersonate` 같은 fetch 인자를 받지 않는다
+> (`ValueError: Unknown parser argument: "impersonate"`). 위장 기본값을 끄려면
+> `scripts/utils.py` 의 `plain_get()` / `plain_session()` 을 쓴다.
 - JS 렌더링 불가 — CSR 사이트에서는 빈 결과 반환
 
 ---
