@@ -318,18 +318,22 @@ def test_new_bypass_profile_cannot_be_staged(tmp_path):
 
 
 def test_no_tracked_profile_is_withheld():
-    """git 이 실제로 추적 중인 fingerprints/ 아래 항목 중에 미배포 판정 디렉터리가 섞여
-    있으면 안 된다.
+    """git 이 실제로 추적 중인 fingerprints/ 아래 항목 중에 배포 화이트리스트 밖의 파일이
+    섞여 있으면 안 된다.
 
     다른 테스트들은 '분류기가 옳은가', '화이트리스트가 분류기와 맞는가' 를 본다.
     이건 다른 질문이다 — **이 PR 이 지금 실제로 무엇을 배포하려 하는가.**
     .gitignore 는 untracked 파일에만 작용하므로 `git add -f` 로 강제 추가됐거나 이미
     추적 중인 프로필은 막지 못한다. 그 경우를 잡는 것은 이 검사뿐이다.
 
-    판정 단위는 **파일이 아니라 디렉터리**다. profile.json 의 JSON 본문만 재분류하면
-    같은 디렉터리의 recipe.md(프로즈 노트, CLAUDE.md 가 '추가 노트' 라고 부르는 바로 그
-    파일)는 전혀 검사 대상이 아니게 되어, 우회 기법을 구조 필드 대신 프로즈로 적어두면
-    빠져나간다 — 디렉터리가 public_dirs() 화이트리스트에 없으면 그 안의 무엇이든 잡는다.
+    판정은 디렉터리가 아니라 **생성된 배포 화이트리스트**(`.gitignore` 의 `# BEGIN/END
+    GENERATED: public-profiles` 블록, `_whitelist_block()`)를 기준으로 한다 — 파일명까지
+    화이트리스트에 정확히 있어야 통과한다. 예전 버전(디렉터리 단위 판정)은 `fingerprints/
+    wanted_co_kr/recipe.md` 처럼 **이미 공개된 디렉터리 안에 화이트리스트에 없는 새
+    파일**(구조 필드 대신 프로즈로 적은 우회 기법)을 놓쳤다 — 디렉터리가 public 이면 그
+    안의 무엇이든 통과시켰기 때문이다. 화이트리스트는 `sync_domain_list.py` 가 같은
+    분류기로 생성하고 `test_whitelist_matches_classifier` 가 드리프트를 막으므로, 이 판정은
+    새로 유지할 게 없다.
 
     `git ls-files -z`(NUL 구분, `--`로 pathspec 고정)를 쓴다 — 공백 포함 경로와,
     `core.quotePath` 기본값이 8진 이스케이프로 감싸는 비-ASCII 경로(`sanitize_filename` 은
@@ -337,9 +341,18 @@ def test_no_tracked_profile_is_withheld():
     깨끗하게 파싱하기 위해서다. pathspec 이 아무것도 못 찾으면(예: fingerprints/ 디렉터리
     자체가 사라지거나 이름이 바뀌면) 이 검사가 조용히 통과해버릴 수 있으므로, 빈 결과는
     그 자체로 실패로 취급한다.
-    """
-    from pathlib import PurePosixPath
 
+    두 가지는 이 검사의 한계로 남는다.
+    - `public_dirs()`(따라서 화이트리스트)는 **디스크 상태**를 읽는다 — 그래서 배포 중이던
+      public 프로필을 디스크에서 지우고 그 삭제를 커밋하지 않으면, 진짜 원인은 "삭제가
+      스테이징 안 됨"인데 이 테스트는 단순 화이트리스트 불일치로 실패한다. 실패 메시지가
+      그 경우의 원인을 정확히 설명하지는 않는다.
+    - 로컬 실행은 **인덱스/워킹트리 분기**를 못 잡는다 — 기존 public 프로필의 우회형
+      내용을 `git add` 로 스테이징하면서 디스크의 무해한 버전은 그대로 두면, 분류기가
+      디스크를 읽으므로 통과해버린다. **CI 는 이 허점이 없다** — checkout 이 인덱스와
+      워킹트리를 동일하게 만들므로 커밋된 내용은 항상 이 검사를 거친다. 로컬 실행(예:
+      pre-push)에서 그린이 나온 것을 이 지점에 대한 증명으로 오해하면 안 된다.
+    """
     raw = subprocess.run(
         ["git", "ls-files", "-z", "--", "fingerprints"],
         cwd=REPO_ROOT, capture_output=True, check=True,
@@ -347,11 +360,10 @@ def test_no_tracked_profile_is_withheld():
     listed = [p for p in raw.split("\0") if p]
     assert listed, "git ls-files 가 아무것도 찾지 못했습니다 — 이 검사가 무력화됐습니다"
 
-    pub = set(public_dirs())
-    offenders = [p for p in listed
-                 if len(PurePosixPath(p).parts) != 3 or PurePosixPath(p).parts[1] not in pub]
+    allowed = {line[1:] for line in _whitelist_block()}
+    offenders = [p for p in listed if p not in allowed]
 
     assert offenders == [], (
-        f"미배포 판정 디렉터리의 파일이 git 에 추적되고 있습니다: {offenders}. "
+        f"배포 화이트리스트 밖의 파일이 git 에 추적되고 있습니다: {offenders}. "
         "`git rm --cached <경로>` 로 인덱스에서 빼세요 — 파일은 디스크에 그대로 남습니다."
     )
