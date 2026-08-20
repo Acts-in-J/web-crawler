@@ -6,6 +6,7 @@ import pytest
 from unittest.mock import patch
 from utils import (
     RateLimiter,
+    detect_pii,
     load_cookies,
     save_cookies,
     load_auth_token,
@@ -254,3 +255,37 @@ def test_robots_network_error_is_reported_not_swallowed(monkeypatch):
     result = check_robots("https://example.com/")
     assert result["error"] is not None
     assert result["allowed"] is True     # 차단 근거가 없으므로 막지는 않는다
+
+
+# ── P2-2: PII 스키마 감지 ──
+def test_pii_detects_author_column_names():
+    warnings = detect_pii([{"작성자": "홍길동", "평점": 5}])
+    assert any("작성자" in w for w in warnings)
+
+
+def test_pii_detects_english_author_columns():
+    for column in ("author", "writer", "nickname", "user_name", "reviewer"):
+        warnings = detect_pii([{column: "someone"}])
+        assert warnings, f"컬럼명 '{column}' 을 감지하지 못했습니다"
+
+
+def test_pii_detects_korean_identity_columns():
+    for column in ("이름", "닉네임", "아이디", "회원명"):
+        warnings = detect_pii([{column: "값"}])
+        assert warnings, f"컬럼명 '{column}' 을 감지하지 못했습니다"
+
+
+def test_pii_schema_warning_reported_once_per_column():
+    """행마다 반복하지 않는다 — 스키마는 데이터셋당 한 번이다."""
+    data = [{"작성자": f"user{i}"} for i in range(30)]
+    author_warnings = [w for w in detect_pii(data) if "작성자" in w]
+    assert len(author_warnings) == 1
+
+
+def test_pii_ignores_innocent_columns():
+    assert detect_pii([{"상품명": "사과", "가격": 1000}]) == []
+
+
+def test_pii_still_detects_values():
+    """기존 값 기반 감지는 그대로 동작한다."""
+    assert detect_pii([{"메모": "문의는 a@b.com 으로"}])

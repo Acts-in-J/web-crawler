@@ -78,13 +78,37 @@ def load_auth_token(filepath: str, max_age_hours: int = 24) -> dict | None:
 _EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
 _PHONE_PATTERN = re.compile(r'(\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4})')
 
+# 개인을 가리키는 컬럼명. 값이 아니라 '스키마' 를 보는 게 이 경우 더 정확하다 —
+# "홍길동" 이라는 값만 봐서는 사람 이름인지 상품명인지 알 수 없지만, 컬럼명이 '작성자' 면 확실하다.
+_PII_COLUMN_HINTS = (
+    "작성자", "이름", "성명", "닉네임", "별명", "아이디", "회원", "구매자", "리뷰어",
+    "author", "writer", "nickname", "username", "user_name", "userid", "user_id",
+    "reviewer", "member", "buyer", "customer", "profile",
+)
+
 
 def detect_pii(data: list[dict]) -> list[str]:
-    """수집 데이터에서 PII(개인식별정보) 패턴을 감지."""
+    """수집 데이터에서 PII(개인식별정보)를 감지 — 값 패턴과 컬럼명 양쪽을 본다."""
     warnings = []
-    sample = data[:50]  # 처음 50건만 검사
+    if not data:
+        return warnings
 
-    for i, item in enumerate(sample):
+    # 1) 스키마 — 데이터셋당 한 번. 컬럼명이 개인을 가리키는지.
+    columns = {key for item in data[:50] if isinstance(item, dict) for key in item}
+    for column in sorted(columns):
+        lowered = str(column).lower()
+        for hint in _PII_COLUMN_HINTS:
+            if hint in lowered:
+                warnings.append(
+                    f"개인식별 컬럼 감지: '{column}' — 개인정보보호법은 영리 여부를 묻지 않는다. "
+                    "수집·보관 근거를 확인하고, 필요 없으면 이 필드를 빼는 것을 권한다"
+                )
+                break
+
+    # 2) 값 — 처음 50건에서 이메일·전화 패턴
+    for i, item in enumerate(data[:50]):
+        if not isinstance(item, dict):
+            continue
         for field, value in item.items():
             if not isinstance(value, str):
                 continue
