@@ -108,3 +108,70 @@ def test_detect_pii_clean():
     data = [{"name": "상품A", "price": "10000"}]
     warnings = detect_pii(data)
     assert len(warnings) == 0
+
+
+# ── S1: 사다리 1·2단 위장 끄기 ──
+import inspect
+
+from utils import PLAIN_KWARGS, plain_get, plain_session
+
+
+def test_plain_kwargs_has_both_arguments():
+    """부분 적용은 악화다 — 두 인자가 항상 함께 있어야 한다."""
+    assert PLAIN_KWARGS == {"impersonate": None, "stealthy_headers": False}
+
+
+def test_plain_get_passes_both_arguments(monkeypatch):
+    captured = {}
+
+    class _FakeFetcher:
+        @staticmethod
+        def get(url, **kw):
+            captured["url"] = url
+            captured["kw"] = kw
+            return "response"
+
+    monkeypatch.setattr("scrapling.fetchers.Fetcher", _FakeFetcher)
+
+    assert plain_get("https://example.com") == "response"
+    assert captured["url"] == "https://example.com"
+    assert captured["kw"]["impersonate"] is None
+    assert captured["kw"]["stealthy_headers"] is False
+
+
+def test_plain_get_allows_explicit_override(monkeypatch):
+    """호출자가 명시적으로 덮을 수는 있다 — 단 둘을 함께 덮어야 한다."""
+    captured = {}
+
+    class _FakeFetcher:
+        @staticmethod
+        def get(url, **kw):
+            captured.update(kw)
+            return "response"
+
+    monkeypatch.setattr("scrapling.fetchers.Fetcher", _FakeFetcher)
+
+    plain_get("https://example.com", impersonate="chrome", stealthy_headers=True)
+    assert captured["impersonate"] == "chrome"
+    assert captured["stealthy_headers"] is True
+
+
+def test_plain_session_passes_both_arguments(monkeypatch):
+    captured = {}
+
+    class _FakeSession:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+    monkeypatch.setattr("scrapling.fetchers.FetcherSession", _FakeSession)
+
+    plain_session()
+    assert captured["impersonate"] is None
+    assert captured["stealthy_headers"] is False
+
+
+def test_plain_helpers_do_not_import_scrapling_at_module_level():
+    """utils 는 scrapling 을 물지 않는다 — import 는 함수 안에서 lazy 하게."""
+    source = inspect.getsource(__import__("utils"))
+    header = source.split("class RateLimiter")[0]
+    assert "scrapling" not in header, "utils 모듈 최상단에서 scrapling 을 import 하고 있습니다"

@@ -167,3 +167,32 @@ def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
         logger.addHandler(handler)
     logger.setLevel(level)
     return logger
+
+
+# ── 사다리 1·2단 — 위장 없는 표준 호출 ────────────────────────────────────
+# Scrapling 기본값은 impersonate="chrome" + stealthy_headers=True 라, 아무것도 안 하면
+# 1단이 이미 TLS 지문을 위장하고 가짜 Google referer 까지 붙인다(헤더 16개).
+# 안티봇이 없는 사이트에는 위장할 이유가 없다. 두 인자를 함께 끄면 헤더가 4개로 떨어진다.
+#
+# ⚠ 반드시 '둘 다' 꺼야 한다. 하나만 끄면 헤더는 랜덤 브라우저인데 TLS 지문은 평범한 curl 인
+#   불일치 상태가 되어 일관된 위장보다 오히려 더 잘 탐지된다. 부분 적용은 개선이 아니라 악화다.
+#
+# Fetcher.configure() 는 파서 전용이라 이 기본값을 전역으로 못 바꾼다
+# (ValueError: Unknown parser argument: "impersonate"). 그래서 래퍼를 쓴다.
+PLAIN_KWARGS = {"impersonate": None, "stealthy_headers": False}
+
+
+def plain_get(url: str, **kw):
+    """사다리 1단. 위장 없는 평문 HTTP — 안티봇이 없는 사이트에 쓴다."""
+    for key, value in PLAIN_KWARGS.items():
+        kw.setdefault(key, value)
+    from scrapling.fetchers import Fetcher  # lazy — utils 는 scrapling 을 물지 않는다
+    return Fetcher.get(url, **kw)
+
+
+def plain_session(**kw):
+    """사다리 2단. 위장 없는 세션 — 숨은 API 를 직접 호출할 때 쓴다."""
+    for key, value in PLAIN_KWARGS.items():
+        kw.setdefault(key, value)
+    from scrapling.fetchers import FetcherSession  # lazy
+    return FetcherSession(**kw)
