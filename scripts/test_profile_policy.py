@@ -318,34 +318,40 @@ def test_new_bypass_profile_cannot_be_staged(tmp_path):
 
 
 def test_no_tracked_profile_is_withheld():
-    """git 이 실제로 추적 중인 프로필 중에 미배포 판정이 섞여 있으면 안 된다.
+    """git 이 실제로 추적 중인 fingerprints/ 아래 항목 중에 미배포 판정 디렉터리가 섞여
+    있으면 안 된다.
 
     다른 테스트들은 '분류기가 옳은가', '화이트리스트가 분류기와 맞는가' 를 본다.
     이건 다른 질문이다 — **이 PR 이 지금 실제로 무엇을 배포하려 하는가.**
-    .gitignore 는 untracked 파일에만 작용하므로 `git add -f` 로 강제 추가됐거나
-    이미 추적 중인 프로필은 막지 못한다. 그 경우를 잡는 것은 이 검사뿐이다.
+    .gitignore 는 untracked 파일에만 작용하므로 `git add -f` 로 강제 추가됐거나 이미
+    추적 중인 프로필은 막지 못한다. 그 경우를 잡는 것은 이 검사뿐이다.
+
+    판정 단위는 **파일이 아니라 디렉터리**다. profile.json 의 JSON 본문만 재분류하면
+    같은 디렉터리의 recipe.md(프로즈 노트, CLAUDE.md 가 '추가 노트' 라고 부르는 바로 그
+    파일)는 전혀 검사 대상이 아니게 되어, 우회 기법을 구조 필드 대신 프로즈로 적어두면
+    빠져나간다 — 디렉터리가 public_dirs() 화이트리스트에 없으면 그 안의 무엇이든 잡는다.
+
+    `git ls-files -z`(NUL 구분, `--`로 pathspec 고정)를 쓴다 — 공백 포함 경로와,
+    `core.quotePath` 기본값이 8진 이스케이프로 감싸는 비-ASCII 경로(`sanitize_filename` 은
+    Unicode-aware 라 `한글.kr` → `한글_kr` 같은 디렉터리가 실제로 생긴다) 양쪽을 한 번에
+    깨끗하게 파싱하기 위해서다. pathspec 이 아무것도 못 찾으면(예: fingerprints/ 디렉터리
+    자체가 사라지거나 이름이 바뀌면) 이 검사가 조용히 통과해버릴 수 있으므로, 빈 결과는
+    그 자체로 실패로 취급한다.
     """
-    import json
+    from pathlib import PurePosixPath
 
-    listed = subprocess.run(
-        ["git", "ls-files", "fingerprints/*/profile.json"],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
-    ).stdout.split()
+    raw = subprocess.run(
+        ["git", "ls-files", "-z", "--", "fingerprints"],
+        cwd=REPO_ROOT, capture_output=True, check=True,
+    ).stdout.decode("utf-8")
+    listed = [p for p in raw.split("\0") if p]
+    assert listed, "git ls-files 가 아무것도 찾지 못했습니다 — 이 검사가 무력화됐습니다"
 
-    offenders = []
-    for rel in listed:
-        path = REPO_ROOT / rel
-        if not path.exists():          # 인덱스엔 있고 디스크엔 없는 경우
-            continue
-        try:
-            data = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (ValueError, OSError):
-            offenders.append(f"{rel} (읽을 수 없음)")
-            continue
-        if not isinstance(data, dict) or not is_distributable(data):
-            offenders.append(rel)
+    pub = set(public_dirs())
+    offenders = [p for p in listed
+                 if len(PurePosixPath(p).parts) != 3 or PurePosixPath(p).parts[1] not in pub]
 
     assert offenders == [], (
-        f"미배포 판정 프로필이 git 에 추적되고 있습니다: {offenders}. "
+        f"미배포 판정 디렉터리의 파일이 git 에 추적되고 있습니다: {offenders}. "
         "`git rm --cached <경로>` 로 인덱스에서 빼세요 — 파일은 디스크에 그대로 남습니다."
     )

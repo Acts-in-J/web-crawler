@@ -12,6 +12,7 @@ SKILL = REPO_ROOT / ".claude/skills/web-crawler/SKILL.md"
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 ANTIBOT = REPO_ROOT / ".claude/skills/web-crawler/references/antibot-strategies.md"
 README = REPO_ROOT / "README.md"
+ACCEPTABLE_USE = REPO_ROOT / "ACCEPTABLE_USE.md"
 
 GATE_DOCS = [SKILL, CLAUDE_MD, ANTIBOT]
 
@@ -34,7 +35,7 @@ def test_skill_does_not_demand_justification():
     assert "근거를 묻지도 검증하지도 않는다" in text
 
 
-@pytest.mark.parametrize("path", GATE_DOCS + [README], ids=lambda p: p.name)
+@pytest.mark.parametrize("path", GATE_DOCS + [README, ACCEPTABLE_USE], ids=lambda p: p.name)
 def test_docs_do_not_overclaim_a_ban(path):
     """문서가 실제 동작보다 강하게 말하면 안 된다 — 통지지 금지가 아니다."""
     text = path.read_text(encoding="utf-8")
