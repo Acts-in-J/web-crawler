@@ -111,7 +111,6 @@ def test_detect_pii_clean():
 
 
 # ── S1: 사다리 1·2단 위장 끄기 ──
-import inspect
 
 from utils import PLAIN_KWARGS, plain_get, plain_session
 
@@ -171,7 +170,36 @@ def test_plain_session_passes_both_arguments(monkeypatch):
 
 
 def test_plain_helpers_do_not_import_scrapling_at_module_level():
-    """utils 는 scrapling 을 물지 않는다 — import 는 함수 안에서 lazy 하게."""
-    source = inspect.getsource(__import__("utils"))
-    header = source.split("class RateLimiter")[0]
-    assert "scrapling" not in header, "utils 모듈 최상단에서 scrapling 을 import 하고 있습니다"
+    """utils 는 scrapling 을 물지 않는다 — import 는 함수 안에서 lazy 하게.
+
+    AST 의 최상위 노드만 본다. 문자열 검색은 두 방향으로 틀린다 —
+    파일 뒤쪽에 덧붙은 코드를 놓치고, 메서드 안의 정당한 lazy import 를 오탐한다.
+    """
+    import ast
+    from pathlib import Path
+
+    import utils
+
+    tree = ast.parse(Path(utils.__file__).read_text(encoding="utf-8"))
+    for node in tree.body:              # 최상위만 — 함수/클래스 내부는 보지 않는다
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [node.module or ""]
+        else:
+            continue
+        offenders = [n for n in names if n.startswith("scrapling")]
+        assert not offenders, f"utils 모듈 최상단에서 scrapling 을 import 하고 있습니다: {offenders}"
+
+
+def test_plain_get_rejects_partial_override():
+    """한쪽만 끄거나 켜는 것은 악화다 — 조용히 허용하지 않는다."""
+    with pytest.raises(ValueError, match="impersonate"):
+        plain_get("https://example.com", stealthy_headers=True)
+    with pytest.raises(ValueError, match="stealthy_headers"):
+        plain_get("https://example.com", impersonate="chrome")
+
+
+def test_plain_session_rejects_partial_override():
+    with pytest.raises(ValueError, match="stealthy_headers"):
+        plain_session(impersonate="chrome")

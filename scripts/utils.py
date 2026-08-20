@@ -182,17 +182,33 @@ def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
 PLAIN_KWARGS = {"impersonate": None, "stealthy_headers": False}
 
 
-def plain_get(url: str, **kw):
-    """사다리 1단. 위장 없는 평문 HTTP — 안티봇이 없는 사이트에 쓴다."""
+def _apply_plain_kwargs(kw: dict) -> dict:
+    """두 인자를 함께 적용한다. 한쪽만 덮으려는 호출은 거부한다.
+
+    부분 적용은 개선이 아니라 악화다 — 헤더는 브라우저라고 말하는데 TLS 지문은 그렇지 않은
+    불일치 상태가 되어 일관된 위장보다 더 잘 탐지된다. 그래서 '둘 다' 이거나 '둘 다 아니거나' 만 허용한다.
+    """
+    overridden = [key for key in PLAIN_KWARGS if key in kw]
+    if len(overridden) == 1:
+        missing = next(key for key in PLAIN_KWARGS if key not in kw)
+        raise ValueError(
+            f"{overridden[0]} 만 지정했습니다. {missing} 도 함께 지정하세요 — "
+            "한쪽만 바꾸면 불일치 지문이 되어 오히려 더 잘 탐지됩니다"
+        )
     for key, value in PLAIN_KWARGS.items():
         kw.setdefault(key, value)
+    return kw
+
+
+def plain_get(url: str, **kw):
+    """사다리 1단. 위장 없는 평문 HTTP — 안티봇이 없는 사이트에 쓴다."""
+    kw = _apply_plain_kwargs(kw)
     from scrapling.fetchers import Fetcher  # lazy — utils 는 scrapling 을 물지 않는다
     return Fetcher.get(url, **kw)
 
 
 def plain_session(**kw):
     """사다리 2단. 위장 없는 세션 — 숨은 API 를 직접 호출할 때 쓴다."""
-    for key, value in PLAIN_KWARGS.items():
-        kw.setdefault(key, value)
+    kw = _apply_plain_kwargs(kw)
     from scrapling.fetchers import FetcherSession  # lazy
     return FetcherSession(**kw)
