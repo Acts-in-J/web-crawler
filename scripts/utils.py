@@ -112,7 +112,27 @@ def load_auth_token(filepath: str, max_age_hours: int = 24) -> dict | None:
 
 
 _EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
-_PHONE_PATTERN = re.compile(r'(\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4})')
+
+# 전화번호 — 구분자가 있는 형태와 없는 형태를 나눠서 본다.
+#
+# 예전 패턴 `(\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4})` 은 구분자를 전부 선택으로 둬서, 사실상
+# "9~12자리 연속 숫자" 를 전화번호로 봤다. 2026-08-21 실측에서 이게 무너졌다:
+#   coupang 30/30 (상품URL 안의 상품ID 8919133357), kurly 23/24 (상품번호 1000763360),
+#   FSS 6/36 (atchFileId 16진수 속 9자리). 실제 개인정보는 한 건도 없었다.
+# 경고가 이 비율로 틀리면 사람은 PII 경고 자체를 무시하게 된다 — 그게 진짜 손해다.
+#
+# 그래서:
+#   1) 구분자(-, ., 공백)가 실제로 있으면 전화번호로 본다. 한국 번호는 거의 이 형태다.
+#   2) 구분자가 없으면 **한국 휴대폰 11자리(01X-XXXX-XXXX)** 만 인정한다. 형식이 명확해서
+#      ID 와 헷갈릴 여지가 적다.
+# 어느 쪽이든 앞뒤가 숫자면 더 긴 숫자열의 일부이므로 제외한다(`(?<!\d)` / `(?!\d)`) —
+# 상품ID·주문번호·pk 가 걸리던 경로가 정확히 이것이었다.
+_PHONE_PATTERN = re.compile(
+    r'(?<!\d)('
+    r'\d{2,4}[-.\s]\d{3,4}[-.\s]\d{4}'   # 구분자 있음: 010-1234-5678 / 02.123.4567
+    r'|01\d{9}'                          # 구분자 없음: 한국 휴대폰 11자리만
+    r')(?!\d)'
+)
 
 # 개인을 가리키는 컬럼명. 값이 아니라 '스키마' 를 보는 게 이 경우 더 정확하다 —
 # "홍길동" 이라는 값만 봐서는 사람 이름인지 상품명인지 알 수 없지만, 컬럼명이 '작성자' 면 확실하다.
@@ -303,6 +323,27 @@ def plain_session(**kw):
     kw = _apply_plain_kwargs(kw)
     from scrapling.fetchers import FetcherSession  # lazy
     return FetcherSession(**kw)
+
+
+# 3단은 진짜 브라우저라 헤더가 실제 브라우저의 것이다 — 거기까지는 위장이 아니다.
+# 다만 Scrapling 은 `google_search` 를 기본으로 켜서 `Referer: https://www.google.com/` 를
+# 붙인다. 오지 않은 곳에서 왔다고 말하는 것이라 헤더가 진짜인 것과는 다른 문제다.
+# 1·2단을 평문으로 만든 근거가 바로 그 조작된 출처였고, 3단도 통지 없이 도는 사다리 A 다.
+# 게다가 이 저장소 문서는 `google_search` 를 4단 curl_cffi 그리드의 우회 손잡이로 적어 뒀다
+# (`antibot-strategies.md`) — 같은 손잡이가 A 에서 조용히 켜져 있으면 안 된다.
+DYNAMIC_KWARGS = {"google_search": False}
+
+
+def plain_dynamic(url: str, **kw):
+    """사다리 3단. JS 렌더링이 필요할 때 — 출처는 지어내지 않는다.
+
+    `impersonate`/`stealthy_headers` 짝 강제는 여기 없다. 그건 HTTP 계층 인자이고
+    3단은 브라우저가 스스로 헤더를 만든다. 여기서 끄는 것은 **조작된 Referer** 하나다.
+    """
+    for key, value in DYNAMIC_KWARGS.items():
+        kw.setdefault(key, value)
+    from scrapling.fetchers import DynamicFetcher  # lazy
+    return DynamicFetcher.fetch(url, **kw)
 
 
 # ── robots.txt — 표지판이지 잠금장치가 아니지만, 무시했다는 사실은 정황이 된다 ──

@@ -524,3 +524,89 @@ def test_required_missing_key_still_flagged():
     """기존 None 기반 케이스(키 자체가 없음)는 그대로 잡힌다 — 회귀 방지."""
     issues = validate_values([{"상품명": "사과"}], PRICE_SCHEMA)
     assert any("가격" in i for i in issues)
+
+
+# ── 2026-08-21 실사이트 회귀 테스트에서 확인된 두 결함을 고정 ──
+#   F1  3단 DynamicFetcher 가 조작된 Referer 를 보낸다 (google_search 기본 ON)
+#   F11 전화번호 패턴이 구분자 없는 ID·URL 숫자열을 잡는다
+
+from utils import DYNAMIC_KWARGS, plain_dynamic
+
+
+# F1 — 사다리 A 는 3단에서도 출처를 지어내지 않는다
+
+def test_dynamic_kwargs_disables_fabricated_referer():
+    """google_search 는 Referer: https://www.google.com/ 를 붙인다 — 사다리 A 에서는 끈다.
+
+    1·2단을 평문으로 만든 근거가 '조작된 출처' 였다. 3단도 통지 없이 도는 칸이므로 같은 기준이다.
+    """
+    assert DYNAMIC_KWARGS["google_search"] is False
+
+
+def test_plain_dynamic_passes_google_search_false(monkeypatch):
+    captured = {}
+
+    class _FakeDynamicFetcher:
+        @staticmethod
+        def fetch(url, **kw):
+            captured["url"] = url
+            captured["kw"] = kw
+            return "response"
+
+    monkeypatch.setattr("scrapling.fetchers.DynamicFetcher", _FakeDynamicFetcher)
+
+    assert plain_dynamic("https://example.com", network_idle=True) == "response"
+    assert captured["url"] == "https://example.com"
+    assert captured["kw"]["google_search"] is False
+    assert captured["kw"]["network_idle"] is True
+
+
+def test_plain_dynamic_allows_explicit_override(monkeypatch):
+    """명시적으로 켜는 것은 막지 않는다 — 기본값을 정할 뿐이다."""
+    captured = {}
+
+    class _FakeDynamicFetcher:
+        @staticmethod
+        def fetch(url, **kw):
+            captured.update(kw)
+            return "response"
+
+    monkeypatch.setattr("scrapling.fetchers.DynamicFetcher", _FakeDynamicFetcher)
+
+    plain_dynamic("https://example.com", google_search=True)
+    assert captured["google_search"] is True
+
+
+# F11 — 전화번호 패턴이 ID·URL 을 잡지 않는다
+
+@pytest.mark.parametrize("value", [
+    "https://www.coupang.com/vp/products/8919133357",   # 상품ID 10자리 (30/30 오탐)
+    "1000763360",                                       # kurly 상품번호 (23/24 오탐)
+    "atchFileId=3af8fa2cf6e043d986f6d764664126ec",      # FSS 16진수 속 9자리 (6/36 오탐)
+    "주문번호 20260821000123",                           # 14자리
+    "3967600242987725422",                              # instagram pk 19자리
+])
+def test_phone_pattern_does_not_flag_ids_and_urls(value):
+    """실측 오탐 — 세 도메인에서 ID·URL 만으로 경고가 쏟아졌고 실제 PII 는 0건이었다."""
+    warnings = detect_pii([{"참조": value}])
+    assert not any("전화번호" in w for w in warnings), f"오탐: {value!r} → {warnings}"
+
+
+@pytest.mark.parametrize("value", [
+    "010-1234-5678",
+    "010.1234.5678",
+    "010 1234 5678",
+    "02-123-4567",
+    "연락처는 031-888-9999 입니다",
+])
+def test_phone_pattern_still_flags_real_numbers(value):
+    """구분자가 있는 실제 번호는 그대로 잡는다 — 오탐을 줄이려다 놓치면 안 된다."""
+    warnings = detect_pii([{"메모": value}])
+    assert any("전화번호" in w for w in warnings), f"놓침: {value!r}"
+
+
+@pytest.mark.parametrize("value", ["01012345678", "01098765432"])
+def test_phone_pattern_flags_bare_mobile_number(value):
+    """구분자 없는 11자리 휴대폰은 형식이 명확하므로 잡는다."""
+    warnings = detect_pii([{"메모": value}])
+    assert any("전화번호" in w for w in warnings), f"놓침: {value!r}"
