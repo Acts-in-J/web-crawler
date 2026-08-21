@@ -30,20 +30,28 @@
 
 > ① 을 확인하는 법 — 에이전트에게 "이 사이트 robots.txt 와 약관 확인해줘" 라고 하면 대신 확인해 줍니다.
 
-**여섯을 다 지키면 녹색, 하나가 빠지면 노랑, ① 의 앞쪽(기술적 우회)이 빠지면 빨강입니다.**
+**신호등**
 
-기술적 우회를 따로 떼어 놓는 이유는, **거기서 형사 책임이 가장 먼저, 가장 확실하게 켜지기** 때문입니다.
-반대로 약관만 금지하고 우회는 없었던 경우는 원칙적으로 계약 문제입니다 — 빨강이 아니라 짙은 노랑입니다.
-다만 노랑을 "민사로 끝난다" 로 읽으면 안 됩니다. ② 부담(업무방해)·③ 개인정보·④ 분량(저작권법 §136)에도
-각각 형사 조항이 붙어 있습니다.
+- **녹색** — 여섯을 다 지킴
+- **노랑** — 하나가 빠짐
+- **빨강** — ① 의 앞쪽, 즉 **기술적 우회**가 빠짐
 
-**가장 자주 빠뜨리는 축은 ④ 분량입니다.** 저작권법 §93② 은 **소량이라도 반복적·체계적으로 복제해서**
-원 DB 의 통상적 이용과 충돌하거나 DB제작자의 이익을 부당하게 해치면 "상당한 부분의 복제" 로 본다고
-정합니다 — 두 갈래 중 **하나만** 해당해도 걸립니다. 하루 10건씩 매일 긁는 것은 "10건" 이 아닙니다 —
-**같은 사이트라도 10건과 전부는 질적으로 다른 행위**입니다.
+**왜 기술적 우회만 따로 빨강인가**
 
-⑥ 흔적은 법이 요구하는 요건은 아니지만 실무에서는 결정적입니다. 숨지 않는 것이 "고의도 악의도 없었다" 는
-가장 좋은 증거이고, 실제로 대부분의 사이트는 자기를 밝히는 봇을 그냥 둡니다.
+- 거기서 **형사 책임이 가장 먼저, 가장 확실하게** 켜지기 때문입니다.
+- 약관만 금지하고 우회는 없었다면 원칙적으로 계약 문제 — 빨강이 아니라 **짙은 노랑**입니다.
+- 단, 노랑을 "민사로 끝난다" 로 읽으면 안 됩니다. ② 부담(업무방해)·③ 개인정보·④ 분량(저작권법 §136)에도 각각 형사 조항이 붙어 있습니다.
+
+**가장 자주 빠뜨리는 축 — ④ 분량**
+
+- 저작권법 §93②: **소량이라도 반복적·체계적으로 복제**해서 (a) 원 DB 의 통상적 이용과 충돌하거나 (b) DB제작자의 이익을 부당하게 해치면 "상당한 부분의 복제" 로 봅니다.
+- 두 갈래 중 **하나만** 해당해도 걸립니다.
+- 하루 10건씩 매일 긁는 것은 "10건" 이 아닙니다 — **같은 사이트라도 10건과 전부는 질적으로 다른 행위**입니다.
+
+**⑥ 흔적 — 법 요건은 아니지만 실무에서 결정적**
+
+- 숨지 않는 것이 "고의도 악의도 없었다" 는 가장 좋은 증거입니다.
+- 실제로 대부분의 사이트는 자기를 밝히는 봇을 그냥 둡니다.
 
 ### 3. 자주 하는 오해
 
@@ -121,7 +129,7 @@ robots.txt 는 법적 구속력이 없지만 표지판입니다. 무시했다는
 
 ## 처음 설치하기 (최초 1회)
 
-> 💡 **가장 쉬운 방법** — 아래 [AI 에이전트에게 셋업 맡기기](#ai-에이전트에게-셋업-맡기기)의 프롬프트를 복사해 에이전트에게 주면 알아서 다 설치합니다. 직접 하고 싶으면 그 아래 [수동 설치](#수동-설치-단계별)를 따라 하세요.
+> 💡 **가장 쉬운 방법** — Claude Code 나 Codex 에게 이 레포 링크를 주고 *"환경 셋업해줘"* 라고만 하세요. 에이전트가 아래 [에이전트용 셋업 안내](#에이전트용-셋업-안내)를 읽고 알아서 설치하고 결과를 보고합니다. 직접 하고 싶으면 [수동 설치](#수동-설치-단계별)를 따라 하세요.
 
 ### 미리 필요한 것
 
@@ -159,29 +167,31 @@ python -m venv .venv && . .venv/bin/activate && python scripts/bootstrap.py
 | `--core-only` | `... -CoreOnly` / `... --core-only` | agent-browser 제외하고 core만 (단, **표준은 full**) |
 | `--skip-browser` | `... -SkipBrowser` / `... --skip-browser` | 브라우저가 이미 있는 환경의 빠른 재검증 |
 
-### AI 에이전트에게 셋업 맡기기
+### 에이전트용 셋업 안내
 
-아래를 **그대로 복사**해 Claude Code 또는 Codex에게 주세요:
+> 이 절은 **셋업을 대신 수행하는 AI 에이전트에게 하는 말**입니다. 사용자는 레포 링크와 *"환경 셋업해줘"* 만 주면 됩니다 — 프롬프트를 따로 작성할 필요 없습니다.
 
-```text
-이 레포의 크롤링 환경을 셋업해줘.
+**실행**
 
-1. Windows면 `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1` 를,
-   macOS/Linux면 venv 만들고 `python scripts/bootstrap.py` 를 실행해.
-   - 단계별(Python deps → 브라우저 → agent-browser → preflight)로 진행되고
-     이미 된 단계는 skip돼. 어느 단계에서 막혔는지 보고해줘.
-   - venv가 안 만들어지면 `py -3 --version` 과 `python --version` 을 확인해.
-     `py -3`가 실패하면(`No installed Python found!`) `python -m venv .venv` 로 직접 만들고
-     이어서 `.\.venv\Scripts\python.exe scripts\bootstrap.py` 를 실행해.
-   - PowerShell에서 npm/agent-browser 실행 정책 오류가 나면 npm.cmd / agent-browser.cmd 를 써.
-   - 브라우저는 `scrapling install` 하나로 끝나(내부에서 playwright install chromium 수행).
-     playwright install 을 또 돌리지 마.
-   - pip이 오래 멈춘 듯 보이면 `--verbose-pip`(setup.ps1은 `-VerbosePip`)로 진행 로그를 봐.
+- Windows: `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1`
+- macOS/Linux: `python -m venv .venv && . .venv/bin/activate && python scripts/bootstrap.py`
+- 진행 순서는 **① Python 패키지 → ② 브라우저(Chromium) → ③ agent-browser → ④ preflight** 이며, 이미 된 단계는 자동으로 skip 됩니다. 중간에 멈추면 **어느 단계에서 막혔는지** 를 사용자에게 보고하세요.
 
-2. 끝나면 `python scripts/preflight.py` 결과(PASS/WARN/FAIL)를 요약해줘.
-   core(Python/Scrapling/Playwright)와 agent-browser를 구분해서, 막힌 단계와
-   '다음에 실행할 명령'을 알려줘. agent-browser가 실패하면 "전체 설치 미완료"로 보고해.
-```
+**막혔을 때**
+
+- venv 가 안 만들어지면 `py -3 --version` 과 `python --version` 을 확인합니다. `py -3` 가 `No installed Python found!` 로 실패하면 `python -m venv .venv` 로 직접 만들고 `.\.venv\Scripts\python.exe scripts\bootstrap.py` 로 이어가세요.
+- PowerShell 에서 npm/agent-browser 가 실행 정책 오류를 내면 `npm.cmd` / `agent-browser.cmd` 를 씁니다.
+- pip 이 한동안 조용한 것은 멈춘 게 아니라 큰 휠을 받는 중입니다. 진행 로그가 필요하면 `-VerbosePip`(bootstrap.py 는 `--verbose-pip`).
+
+**하지 말 것**
+
+- `playwright install` 을 따로 돌리지 마세요 — `scrapling install` 이 내부에서 이미 수행합니다.
+- `python -m scrapling` 은 동작하지 않습니다. `scrapling install`(venv 활성화 후) 또는 `.\.venv\Scripts\scrapling.exe install` 을 쓰세요.
+
+**보고**
+
+- 끝나면 `python scripts/preflight.py` 결과를 **core(Python/Scrapling/Playwright)와 agent-browser 를 구분해** PASS/WARN/FAIL 로 요약하고, 막힌 단계와 *다음에 실행할 정확한 명령* 을 함께 적습니다.
+- **agent-browser 가 실패하면 "전체 설치 미완료" 로 보고합니다** — core 만 통과한 것은 완료가 아닙니다.
 
 ### 수동 설치 (단계별)
 
