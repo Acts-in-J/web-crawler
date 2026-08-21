@@ -143,23 +143,31 @@ import sys, os, json, time
 sys.path.insert(0, './scripts')
 from utils import RateLimiter, setup_logger
 from export_excel import export_to_excel
-from chrome_cdp import CDPSession
+from chrome_cdp import launch_chrome_cdp, close_chrome_cdp, get_playwright_cdp_connection
 
 logger = setup_logger("akamai_crawler")
 limiter = RateLimiter(delay=1.5)
 results = []
 consecutive_errors = 0
 
-with CDPSession(url="<TARGET_URL>") as session:
+# 1) headed Chrome 을 임시 프로필로 띄운다 (기존 Chrome 은 모두 종료돼 있어야 한다).
+#    상품/목록 페이지를 **먼저 열어** Akamai 쿠키를 받은 다음, 같은 세션에서 API 를 호출한다.
+info = launch_chrome_cdp(port=9222, url="<TARGET_URL>")
+browser = None
+try:
+    browser, context, page = get_playwright_cdp_connection(9222)
+    page.goto("<TARGET_URL>", wait_until="domcontentloaded", timeout=90000)
+    page.wait_for_timeout(6000)
+
     for page_num in range(1, max_pages + 1):
         try:
             limiter.wait()
-            data = session.evaluate(f"""
-                async () => {{
-                    const resp = await fetch('<API_URL>?page={page_num}');
+            # 2) 페이지 컨텍스트 안에서 fetch — 세션 쿠키·헤더가 그대로 탑승한다.
+            data = page.evaluate(
+                """async (n) => {
+                    const resp = await fetch(`<API_URL>?page=${n}`);
                     return await resp.json();
-                }}
-            """)
+                }""", page_num)
             # ... 데이터 파싱 ...
             consecutive_errors = 0
         except Exception as e:
@@ -170,10 +178,16 @@ with CDPSession(url="<TARGET_URL>") as session:
                 break
             continue
 
-        # 100건마다 중간 저장
-        if len(results) % 100 == 0 and results:
+        # 100건마다 중간 저장 (0건이면 기존 파일을 덮지 않는다)
+        if results and len(results) % 100 == 0:
             with open(raw_data_path, "w", encoding="utf-8") as f:
                 json.dump(results, f, ensure_ascii=False, indent=2)
+finally:
+    if browser:
+        browser.close()
+    if info and not info.get("reused"):
+        close_chrome_cdp(port=9222, cleanup_profile=True,
+                         user_data_dir=info.get("user_data_dir"))
 ```
 
 ### JS 일괄 수집 규모별 패턴

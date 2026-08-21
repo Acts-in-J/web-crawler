@@ -161,7 +161,7 @@ autoresearch 4회 실험 + 실제 크롤링에서 검증된 최적 전략:
 
 | 사이트 | 전략 | Fetcher | 성공률 | 비고 |
 |--------|------|---------|--------|------|
-| `antibot_type: akamai` 로 기록된 도메인 | 6단 Chrome CDP (**통지 이후**) | CDPSession (headed) | 100% | headless 불가 |
+| `antibot_type: akamai` 로 기록된 도메인 | 6단 Chrome CDP (**통지 이후**) | `launch_chrome_cdp()` (headed) | 100% | headless 불가 |
 | **kurly.com** | CSR DynamicFetcher | DynamicFetcher | 100% | Next.js, page_action 필요 시 |
 | **wanted.co.kr** | API 직접 | `plain_session()` | 100% | 0.6초에 30건, 가장 빠름 |
 | **g2b.go.kr** | SPA 세션 인터셉트 | Playwright on("response") | 100% | WebSquare, 로그인 불필요 |
