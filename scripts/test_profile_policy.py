@@ -306,12 +306,31 @@ def test_session_intercept_stays_public():
     assert is_distributable(profiles["g2b_go_kr"])
 
 
-@pytest.mark.parametrize("name", ["coupang_com", "fin_land_naver_com",
-                                  "brand_naver_com", "smartstore_naver_com",
-                                  "oliveyoung_co_kr"])
-def test_ladder_b_profiles_are_not_distributable(name):
-    profiles = load_all()
-    assert not is_distributable(profiles[name])
+def test_local_profiles_on_disk_are_not_distributable():
+    """이 머신에 있는 **미배포 프로필**이 배포 대상으로 분류되지 않는가.
+
+    예전에는 이름을 하드코딩했다(coupang_com, oliveyoung_co_kr, ...). 그런데 그 파일들은
+    바로 이 정책 때문에 repo 에 없다 — gitignore 로 막혀 있고 각자 머신에만 남는다.
+    그래서 clean clone 과 CI 에서 KeyError 로 죽었다. 테스트가 "저장소에 없는 파일" 을
+    전제하고 있었던 것이다.
+
+    이름 대신 **디스크에 있는데 배포 화이트리스트에 없는 것 전부**를 대상으로 삼는다.
+    로컬에서는 실제 미배포 프로필들이 걸리고, CI 에서는 대상이 0개라 공집합이 된다.
+
+    공집합이어도 되는 이유: 위험한 방향은 이 검사가 아니라
+    `test_no_tracked_profile_is_withheld` 가 막는다. 그건 git 이 실제로 추적하는 것을 보므로
+    어디서든 돈다. 이 검사는 그 거울상 — "추적 안 되는 것들이 정말 추적되면 안 되는 것들이
+    맞는가" 를 파일이 있는 곳에서만 확인한다.
+    """
+    whitelisted = {line.split("/")[1] for line in _whitelist_block()}
+    offenders = [
+        name for name, profile in load_all().items()
+        if name not in whitelisted and is_distributable(profile)
+    ]
+    assert not offenders, (
+        f"화이트리스트 밖인데 배포 대상으로 분류된 프로필: {offenders} — "
+        "분류가 틀렸거나 sync_domain_list.py 를 안 돌렸다"
+    )
 
 
 def test_expected_public_count():
