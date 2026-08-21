@@ -25,9 +25,9 @@ autoresearch 실험(4회 반복, 6개 사이트)과 실제 크롤링에서 발�
 │   └── API 키 필요? → "API 키 필요 사이트" 참조
 │
 ├── HTTP 200이지만 데이터 없음 → JS 렌더링 또는 SPA 문제
-│   ├── 페이지 내용이 빈 HTML? → DynamicFetcher로 전환
-│   ├── JS 챌린지 페이지? → StealthyFetcher 또는 Chrome CDP
-│   └── SPA 내비게이션 필요? → DynamicFetcher + page_action
+│   ├── 페이지 내용이 빈 HTML? → DynamicFetcher로 전환 (3단, 자동)
+│   ├── JS 챌린지 페이지? → **이음매 통지 게이트** → '진행' 이면 StealthyFetcher 또는 Chrome CDP
+│   └── SPA 내비게이션 필요? → DynamicFetcher + page_action (3단, 자동)
 │
 ├── 데이터는 있지만 잘못된 데이터 → "False Positive" 참조
 │
@@ -44,15 +44,16 @@ autoresearch 실험(4회 반복, 6개 사이트)과 실제 크롤링에서 발�
 - `_abck`, `bm_sz` 쿠키가 설정됨
 
 ### 원인 (autoresearch baseline에서 발견)
-autoresearch baseline에서 coupang.com 크롤링이 0건 실패. FETCHER_CHAIN에 Chrome CDP가 포함되지 않아 DynamicFetcher까지만 시도하고 종료됨.
+`antibot_type: akamai` 로 기록된 도메인에서 수집이 0건으로 끝났다. FETCHER_CHAIN에 Chrome CDP가 포함되지 않아 DynamicFetcher까지만 시도하고 종료됨.
 
 ### 해결책
-1. **FETCHER_CHAIN 사용 중지** — Akamai 감지 시 즉시 Chrome CDP로 전환
-2. **headed Chrome 필수** — headless Chrome은 Akamai에 탐지됨
-3. `antibot-strategies.md § Akamai` 패턴 적용
+1. **FETCHER_CHAIN 사용 중지** — 사다리 A 전용 체인이라 이 상황을 풀 수 없다
+2. **이음매 통지 게이트를 거친다** — Akamai 감지는 사다리 B 진입 신호다. 사용자가 '진행' 을 고른 뒤에 4·5단을 건너뛰고 Chrome CDP로 간다 (`consent` 기록이 이미 있으면 통지 없이 진행)
+3. **headed Chrome 필수** — headless Chrome은 Akamai에 탐지됨
+4. `antibot-strategies.md § Akamai` 패턴 적용
 
 ### autoresearch 검증 결과
-- baseline: coupang 0/50건 (FAIL)
+- baseline: 0/50건 (FAIL — 체인이 사다리 A 에서 끝나 이 사이트를 풀 수 없었다)
 - exp-1: Chrome CDP 적용 → 50/50건 (100%)
 - exp-2~3: 안정적 100% 유지
 
@@ -160,9 +161,9 @@ autoresearch 4회 실험 + 실제 크롤링에서 검증된 최적 전략:
 
 | 사이트 | 전략 | Fetcher | 성공률 | 비고 |
 |--------|------|---------|--------|------|
-| **coupang.com** | Akamai Chrome CDP | CDPSession (headed) | 100% | headless 불가 |
+| `antibot_type: akamai` 로 기록된 도메인 | 6단 Chrome CDP (**통지 이후**) | `launch_chrome_cdp()` (headed) | 100% | headless 불가 |
 | **kurly.com** | CSR DynamicFetcher | DynamicFetcher | 100% | Next.js, page_action 필요 시 |
-| **wanted.co.kr** | API 직접 | FetcherSession | 100% | 0.6초에 30건, 가장 빠름 |
+| **wanted.co.kr** | API 직접 | `plain_session()` | 100% | 0.6초에 30건, 가장 빠름 |
 | **g2b.go.kr** | SPA 세션 인터셉트 | Playwright on("response") | 100% | WebSquare, 로그인 불필요 |
-| **books.toscrape.com** | 정적 HTML | Fetcher | 100% | 테스트 사이트 |
+| **books.toscrape.com** | 정적 HTML | `plain_get()` | 100% | 테스트 사이트 |
 | **quotes.toscrape.com** | JS 렌더링 | DynamicFetcher | 100% | 테스트 사이트 |

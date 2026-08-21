@@ -1,5 +1,6 @@
 {
   "domain": "g2b.go.kr",
+  "capability": "session",
   "fetcher_type": "playwright_spa_intercept",
   "antibot_type": "spa_session",
   "antibot_strategy": "playwright_intercept",

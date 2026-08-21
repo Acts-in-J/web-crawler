@@ -1,6 +1,6 @@
 """scripts/chrome_cdp.py — Chrome CDP 세션 관리 유틸리티
 
-Akamai/고급 WAF 사이트 대응을 위해 Chrome을 CDP 모드로 실행하고
+브라우저 세션이 필요한 사이트 대응을 위해 Chrome을 CDP 모드로 실행하고
 Playwright로 연결하는 유틸리티.
 """
 import os

@@ -1,5 +1,6 @@
 {
   "domain": "wanted.co.kr",
+  "capability": "api",
   "fetcher_type": "FetcherSession",
   "antibot_type": "none",
   "antibot_strategy": "none",

@@ -1,5 +1,6 @@
 {
   "domain": "builtini.co.kr",
+  "capability": "api",
   "fetcher_type": "API_SESSION",
   "site_type": "api_direct",
   "api_endpoints": [

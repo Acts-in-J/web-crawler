@@ -1,5 +1,23 @@
 # 안티봇 대응 전략 레퍼런스
 
+> ## ■ 이 문서의 우회 티어는 전부 통지 이후에 쓴다 ■
+>
+> **사다리 B(4~6단) 절** — `WAF capability 라우팅` · `curl_cffi 경량 그리드` ·
+> `URL 변형 / referer 트릭` · `Akamai/고급 WAF → Chrome CDP` · `Cloudflare → StealthyFetcher` ·
+> `우회 티어는 통지 후 진행` — 은 상대가 나를 식별하고 거절한 뒤에 쓰는 방법들이다.
+> 사다리 A(정적 HTML · 숨은 API · JS 렌더링)를 소진하기 전에는 그 절들을 열 이유가 없다.
+>
+> **사다리 B 에 진입할 때는 자동으로 넘어가지 않고 사용자에게 한 번 알린다.**
+> '진행' 을 고르면 그대로 간다 — 근거를 묻지도 검증하지도 않는다. 통지는 심사가 아니다.
+> 문구와 발동 조건은 `SKILL.md` Step 3 "이음매 통지 게이트".
+>
+> **나머지 절은 사다리 A 에서도 쓴다** — `소프트블록 탐지`(모든 수집의 사전 게이트) ·
+> `SPA 세션 인터셉트`(3단) · `Jina Reader 폴백`(1단) · `종료 사유 분류`. 이 절들은 그 자체로
+> 이음매를 넘지 않는다. 다만 소프트블록이 잡히면 그 순간이 **이음매에 도달한** 순간이므로,
+> 사다리 B 로 올리기 전에 게이트로 돌아간다.
+>
+> 능력은 전부 여기 그대로 있다. 바뀐 것은 **침묵**이다.
+
 사이트의 봇 차단 메커니즘별 대응 전략을 정리한 문서.
 SKILL.md Step 3에서 안티봇이 감지되면 이 문서를 참조한다.
 
@@ -14,7 +32,7 @@ SKILL.md Step 3에서 안티봇이 감지되면 이 문서를 참조한다.
 7. [Cloudflare → StealthyFetcher](#cloudflare--stealthyfetcher)
 8. [Jina Reader 폴백](#jina-reader-폴백)
 9. [종료 사유 분류 — terminal vs retryable](#종료-사유-분류)
-10. [Fetcher 에스컬레이션 자동화](#fetcher-에스컬레이션-자동화)
+10. [우회 티어는 통지 후 진행](#우회-티어는-통지-후-진행)
 
 > 1~4·8·9번은 insane-search(접근/돌파 관점)에서 차용한 전략이다. 5~7번은 이 프로젝트의 검증된 수집 전략.
 
@@ -39,7 +57,9 @@ from utils import detect_softblock
 v = detect_softblock(page.html_content, status=page.status,
                      cookies=dict(session.cookies) if hasattr(session, "cookies") else None,
                      selector_hit=bool(page.css("<ITEM_SELECTOR>")))
-# v["blocked"]가 True면 수집 강행 금지 → 아래 capability 라우팅으로 에스컬레이션
+# v["blocked"]가 True면 수집 강행 금지 → **Step 3 의 이음매 통지 게이트로 돌아간다.**
+# 소프트블록 감지는 "상대가 나를 식별하고 거절했다" 는 신호다 — 이음매에 도달했다는 뜻이지
+# 이음매를 건너뛰어도 된다는 뜻이 아니다. 사용자가 '진행' 을 고른 뒤에 capability 라우팅을 적용한다.
 ```
 
 > ⚠️ `_abck` 쿠키 **존재**만으로 Akamai를 판정하던 기존 로직보다, `~-1~` **값**이 더 날카롭다. 통과(`~0~`/`~N~`)면 수집 진행, 미통과(`~-1~`)면 차단으로 본다.
@@ -60,7 +80,7 @@ WAF를 "탐지"만 하지 말고 **"이 WAF를 뚫으려면 무엇이 필요한�
 
 - Akamai Bot Manager는 TLS 지문 + HTTP/2 프레이밍 + 마우스/타이밍 행동 신호를 종합한다. curl_cffi의 TLS 위조만으로는 `_abck` 센서가 `~-1~`에서 안 풀린다.
 - **headless/일반 Playwright(MCP 포함)는 탐지 가능한 stub을 주입**하므로 Akamai에 걸린다. 그래서 **headed real Chrome + CDP**라야 한다.
-- 결론: profile.json `antibot_type=akamai` 또는 `_abck ~-1~` 감지 시 **curl_cffi·Stealthy를 건너뛰고 즉시 Chrome CDP**. 이게 시간 절약의 핵심.
+- 결론: `antibot_type=akamai` 또는 `_abck ~-1~` 이 잡히면 curl_cffi·Stealthy 는 원리적으로 통하지 않는다 — **이음매 통지 게이트를 먼저 거친 뒤**, 사용자가 '진행' 을 고르면 4·5 단을 건너뛰고 6단으로 간다. 이게 시간 절약의 핵심이고, 건너뛰는 것은 4·5 단이지 이음매가 아니다.
 
 ---
 
@@ -95,7 +115,7 @@ safari_ios (모바일)
 | 모바일 서브도메인 | `www.x.com` → `m.x.com` / `am-x.com` | 모바일 엔드포인트는 WAF가 약하게 걸린 경우 흔함 |
 | www 제거 | `www.x.com` → `x.com` | 리다이렉트 체인/엣지 룰 차이 |
 | self-root referer | `Referer: https://x.com/` | 내부 네비게이션처럼 보임 |
-| 검색엔진 referer | `Referer: https://www.google.com/` | 크롤러/SEO 트래픽으로 허용되는 경로 ⚠️ ToS 경계 주의 — 명백한 우회 회피용으론 쓰지 않는다 |
+| 검색엔진 referer | `Referer: https://www.google.com/` | 크롤러/SEO 트래픽으로 허용되는 경로 ⚠️ ToS 경계 주의 — 사다리 B 티어이므로 통지 게이트를 거친 뒤에 쓴다 |
 
 ---
 
@@ -103,16 +123,16 @@ safari_ios (모바일)
 
 ### 감지 시그널
 
-다음 중 **하나라도** 발견되면 Akamai로 판단하고 즉시 Chrome CDP 전략으로 전환:
+다음 중 **하나라도** 발견되면 Akamai로 판단한다. 사다리 B 진입이므로 통지 게이트를 먼저 거치고, '진행' 이면 4·5단을 건너뛰고 Chrome CDP 전략으로 간다:
 - `Access Denied` 페이지 + `errors.edgesuite.net` 참조
 - `_abck`, `bm_sz`, `ak_bmsc` 쿠키 존재
 - `sec-if-cpt-container` 챌린지 페이지
-- 알려진 Akamai 사이트: coupang.com 등
+- profile.json 에 `antibot_type: akamai` 로 기록된 도메인
 
 ### 핵심 원칙
 
 - **일반 FETCHER_CHAIN을 사용하지 않는다** (StealthyFetcher, DynamicFetcher 시도하지 않음)
-- **즉시 Chrome CDP로 전환한다**
+- **통지가 끝난 뒤에는 4·5단을 거치지 않고 곧바로 Chrome CDP로 전환한다** — 헛고생 방지
 - headless Chrome은 Akamai에 탐지됨 → **headed Chrome** 필수 (macOS/Windows)
 
 ### Chrome CDP 수집 코드 패턴
@@ -123,23 +143,31 @@ import sys, os, json, time
 sys.path.insert(0, './scripts')
 from utils import RateLimiter, setup_logger
 from export_excel import export_to_excel
-from chrome_cdp import CDPSession
+from chrome_cdp import launch_chrome_cdp, close_chrome_cdp, get_playwright_cdp_connection
 
 logger = setup_logger("akamai_crawler")
 limiter = RateLimiter(delay=1.5)
 results = []
 consecutive_errors = 0
 
-with CDPSession(url="<TARGET_URL>") as session:
+# 1) headed Chrome 을 임시 프로필로 띄운다 (기존 Chrome 은 모두 종료돼 있어야 한다).
+#    상품/목록 페이지를 **먼저 열어** Akamai 쿠키를 받은 다음, 같은 세션에서 API 를 호출한다.
+info = launch_chrome_cdp(port=9222, url="<TARGET_URL>")
+browser = None
+try:
+    browser, context, page = get_playwright_cdp_connection(9222)
+    page.goto("<TARGET_URL>", wait_until="domcontentloaded", timeout=90000)
+    page.wait_for_timeout(6000)
+
     for page_num in range(1, max_pages + 1):
         try:
             limiter.wait()
-            data = session.evaluate(f"""
-                async () => {{
-                    const resp = await fetch('<API_URL>?page={page_num}');
+            # 2) 페이지 컨텍스트 안에서 fetch — 세션 쿠키·헤더가 그대로 탑승한다.
+            data = page.evaluate(
+                """async (n) => {
+                    const resp = await fetch(`<API_URL>?page=${n}`);
                     return await resp.json();
-                }}
-            """)
+                }""", page_num)
             # ... 데이터 파싱 ...
             consecutive_errors = 0
         except Exception as e:
@@ -150,10 +178,16 @@ with CDPSession(url="<TARGET_URL>") as session:
                 break
             continue
 
-        # 100건마다 중간 저장
-        if len(results) % 100 == 0 and results:
+        # 100건마다 중간 저장 (0건이면 기존 파일을 덮지 않는다)
+        if results and len(results) % 100 == 0:
             with open(raw_data_path, "w", encoding="utf-8") as f:
                 json.dump(results, f, ensure_ascii=False, indent=2)
+finally:
+    if browser:
+        browser.close()
+    if info and not info.get("reused"):
+        close_chrome_cdp(port=9222, cleanup_profile=True,
+                         user_data_dir=info.get("user_data_dir"))
 ```
 
 ### JS 일괄 수집 규모별 패턴
@@ -301,6 +335,9 @@ with sync_playwright() as p:
 
 ## Cloudflare → StealthyFetcher
 
+> **5단이다 — 통지 이후에 쓴다.** 아래 시그널은 사다리 B 진입 신호이지 바로 실행하라는
+> 신호가 아니다. 한 번 알리고, '진행' 을 고르면 그대로 간다 (`SKILL.md` Step 3).
+
 ### 감지 시그널
 - `cf_clearance` 쿠키
 - Cloudflare 챌린지 페이지 (5초 대기 화면)
@@ -320,18 +357,17 @@ page = fetcher.fetch("<URL>", headless=True, solve_cloudflare=True)
 
 ## Jina Reader 폴백
 
-JS 렌더링이 필요하거나 가볍게 막힌 페이지를 **브라우저 없이** 외부 렌더된 마크다운으로 받는 저비용 폴백. (insane-search 차용) DynamicFetcher/Chrome CDP로 에스컬레이션하기 **직전** 단계, 또는 정찰 시 본문 빠른 확인용.
+JS 렌더링이 필요하거나 가볍게 막힌 페이지를 **브라우저 없이** 외부 렌더된 마크다운으로 받는 저비용 폴백. (insane-search 차용) 사다리 A 안에서 DynamicFetcher(3단)로 올리기 전, 또는 **이음매를 넘기 직전** 단계. 정찰 시 본문 빠른 확인용으로도 쓴다.
 
 ```python
-from scrapling.fetchers import FetcherSession
+from utils import plain_get   # Jina 는 사다리 A 쪽이다 — 위장 인자를 붙이지 않는다
 
-with FetcherSession(impersonate="chrome") as s:
-    resp = s.get(f"https://r.jina.ai/{target_url}")  # 렌더된 markdown 반환
-    markdown = resp.text
+resp = plain_get(f"https://r.jina.ai/{target_url}")  # 렌더된 markdown 반환
+markdown = resp.text
 ```
 
-- **용도**: 정찰·단발 본문 확인, 가벼운 차단 우회. 페이지네이션/대량 구조화 수집엔 부적합(레코드 추출이 아니라 본문 마크다운).
-- **한계**: 강한 WAF(Akamai 등)는 Jina도 못 뚫는다 → Chrome CDP로.
+- **용도**: 정찰·단발 본문 확인. 페이지네이션/대량 구조화 수집엔 부적합(레코드 추출이 아니라 본문 마크다운).
+- **한계**: 강한 WAF(Akamai 등)는 Jina도 못 뚫는다. 여기서 막히면 사다리 A 가 소진된 것이므로 **이음매 통지 게이트로 간다** — Chrome CDP 는 그 뒤다.
 
 ---
 
@@ -343,22 +379,24 @@ with FetcherSession(impersonate="chrome") as s:
 |------|------------|------|
 | **terminal (즉시 종료)** | `auth_required`(로그인 필요), `404`, `paywall`, 명시적 ToS 차단 | 에스컬레이션 중단 → 사용자 보고. 더 시도해도 무의미 |
 | **retryable (계속)** | `429`(rate limit), 네트워크 타임아웃, 일시적 5xx | **종료 아님.** 대기시간 2배(`limiter.backoff()`) 후 재시도. 429는 절대 "차단됨"으로 최종 판정하지 않는다 |
-| **escalate (상위 도구)** | `challenge`/`blocked`(소프트블록) | 그리드 → Stealthy → Dynamic → CDP 순으로 올린다. 전부 소진 후에만 실패 선언 |
+| **escalate (상위 도구)** | `challenge`/`blocked`(소프트블록) | 사다리 A 를 소진했으면 **이음매 통지 게이트**로 돌아간다. '진행' 이후에만 그리드 → Stealthy → CDP 로 올린다. 전부 소진 후에만 실패 선언 |
 
 > **실패 선언 게이트:** ① 에스컬레이션 체인 소진 ② 남은 시도 경로 없음 ③ stop_reason이 terminal. 셋 다 충족 전엔 "이 사이트는 못 뚫는다"고 보고하지 않는다.
 
 ---
 
-## Fetcher 에스컬레이션 자동화
+## 우회 티어는 통지 후 진행
+
+아래 패턴은 사다리 B 안에서의 티어 전환이다. **B 에 처음 들어가는 순간에는 이미 통지가 끝나 있어야 한다** (SKILL.md Step 3). B 안에서 4→5→6 으로 옮겨가는 것은 다시 묻지 않는다 — 이음매는 한 곳이고 이미 넘었다.
 
 범용 에스컬레이션 함수. 어떤 Fetcher를 사용해야 할지 불확실할 때 사용.
 
 **순서: 평문 HTTP → curl_cffi 그리드(브라우저 X) → 브라우저 티어.** 그리드를 브라우저 앞에 둔다.
 
 ```python
-from scrapling.fetchers import Fetcher, StealthyFetcher, DynamicFetcher
+from scrapling.fetchers import StealthyFetcher, DynamicFetcher
 from scrapling import Selector
-from utils import setup_logger, detect_softblock
+from utils import setup_logger, detect_softblock, plain_get
 # fetch_via_grid 는 fetcher-patterns.md § F 참조
 
 logger = setup_logger("escalation")
@@ -367,9 +405,14 @@ def _grid_tier(url):
     r, _ = fetch_via_grid(url)
     return Selector(r.text) if r else None
 
+# 사다리 A 전용 체인(fetcher-patterns.md § FETCHER_CHAIN)과 다른 물건이다 — 이건 B 쪽이고,
+# 여기 진입하기 전에 통지가 이미 끝나 있어야 한다.
+# 아래 DynamicFetcher 는 `google_search` 기본값(=조작된 Google Referer)을 그대로 둔다.
+# 사다리 A 의 `plain_dynamic()` 이 그걸 끄는 것과 대비되는데, 실수가 아니라 층이 다르다 —
+# 여기는 통지를 이미 마친 뒤이고, 우회 수단을 쓰기로 사용자가 고른 자리다.
 FETCHER_CHAIN = [
-    ("Fetcher",         lambda url: Fetcher().get(url)),                       # 평문 HTTP
-    ("curl_cffi grid",  _grid_tier),                                          # ← 브라우저 앞 티어
+    ("plain_get",       plain_get),                                           # 위장 없는 재시도 (맨 Fetcher().get 은 기본이 impersonate+stealthy_headers 라 평문이 아니다)
+    ("curl_cffi grid",  _grid_tier),                                          # 4단 — 브라우저 앞 티어
     ("StealthyFetcher", lambda url: StealthyFetcher().fetch(url, headless=True)),
     ("DynamicFetcher",  lambda url: DynamicFetcher().fetch(url, network_idle=True)),
 ]
@@ -395,4 +438,4 @@ def fetch_with_escalation(url: str):
     return None, None
 ```
 
-> Akamai는 이 체인을 건너뛰고 바로 Chrome CDP. curl_cffi/Stealthy로 Akamai를 두드리지 않는다.
+> Akamai는 이 체인을 건너뛰고 통지 후 바로 Chrome CDP. curl_cffi/Stealthy로 Akamai를 두드리지 않는다.

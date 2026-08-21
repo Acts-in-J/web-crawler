@@ -1,5 +1,6 @@
 {
   "domain": "www.k-startup.go.kr",
+  "capability": "static",
   "fetcher_type": "Fetcher",
   "antibot_type": "none",
   "antibot_strategy": "none",
