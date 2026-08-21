@@ -393,6 +393,9 @@ def _grid_tier(url):
 
 # 사다리 A 전용 체인(fetcher-patterns.md § FETCHER_CHAIN)과 다른 물건이다 — 이건 B 쪽이고,
 # 여기 진입하기 전에 통지가 이미 끝나 있어야 한다.
+# 아래 DynamicFetcher 는 `google_search` 기본값(=조작된 Google Referer)을 그대로 둔다.
+# 사다리 A 의 `plain_dynamic()` 이 그걸 끄는 것과 대비되는데, 실수가 아니라 층이 다르다 —
+# 여기는 통지를 이미 마친 뒤이고, 우회 수단을 쓰기로 사용자가 고른 자리다.
 FETCHER_CHAIN = [
     ("plain_get",       plain_get),                                           # 위장 없는 재시도 (맨 Fetcher().get 은 기본이 impersonate+stealthy_headers 라 평문이 아니다)
     ("curl_cffi grid",  _grid_tier),                                          # 4단 — 브라우저 앞 티어

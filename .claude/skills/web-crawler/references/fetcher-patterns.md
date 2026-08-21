@@ -33,8 +33,7 @@ SKILL.md Step 3에서 결정된 전략에 맞는 패턴을 선택하여 사용�
 우회 능력은 전부 그대로 있다. 자동 순차 진입에서 빠진 것뿐이다.
 
 ```python
-from scrapling.fetchers import DynamicFetcher
-from utils import plain_get, plain_session
+from utils import plain_dynamic, plain_get, plain_session
 
 ITEM_SELECTOR = "<ITEM_SELECTOR>"
 
@@ -47,7 +46,7 @@ def _session_tier(url):
 FETCHER_CHAIN = [
     ("plain_get",      plain_get),                                            # 1단 정적 HTML (위장 없음)
     ("plain_session",  _session_tier),                                        # 2단 숨은 API·세션 유지
-    ("DynamicFetcher", lambda url: DynamicFetcher().fetch(url, network_idle=True)),  # 3단 JS 렌더링
+    ("plain_dynamic",  lambda url: plain_dynamic(url, network_idle=True)),    # 3단 JS 렌더링 (출처 조작 없음)
 ]
 
 results = []
@@ -222,19 +221,24 @@ with open("./output/raw_data.json", "w", encoding="utf-8") as f:
 
 CSR(Next.js, React 등) 사이트에서 JS 렌더링이 필요한 경우.
 
+> **`plain_dynamic()` 을 쓴다.** 맨 `DynamicFetcher().fetch(url)` 은 `google_search` 가 기본값
+> `True` 라 **`Referer: https://www.google.com/` 를 지어내 붙인다.** 3단은 브라우저가 헤더를
+> 진짜로 만들어 주는 칸이지 오지 않은 곳에서 왔다고 말하는 칸이 아니고, 통지 없이 도는
+> 사다리 A 다. (`google_search` 는 `antibot-strategies.md` 의 4단 그리드 손잡이 목록에 있는
+> 값이기도 하다 — A 에서 조용히 켜져 있으면 안 된다.)
+
 ```python
-from scrapling.fetchers import DynamicFetcher
+from utils import plain_dynamic
 
 logger = setup_logger("dynamic_crawler")
 limiter = RateLimiter(delay=1.5)
 results = []
-fetcher = DynamicFetcher()
 
 page_num = 1
 while True:
     limiter.wait()
     url = f"<BASE_URL>?page={page_num}"
-    page = fetcher.fetch(url, network_idle=True)
+    page = plain_dynamic(url, network_idle=True)
     if page.status != 200:
         break
 
@@ -254,7 +258,7 @@ while True:
     page_num += 1
 ```
 
-### DynamicFetcher + page_action
+### plain_dynamic + page_action
 
 SPA에서 클릭/스크롤 등 추가 조작이 필요할 때:
 
@@ -266,7 +270,7 @@ def custom_action(page):
     page.locator('button:has-text("더보기")').click()
     page.wait_for_timeout(2000)
 
-page = fetcher.fetch(url, network_idle=True, page_action=custom_action)
+page = plain_dynamic(url, network_idle=True, page_action=custom_action)
 ```
 
 ---
@@ -346,7 +350,9 @@ def fetch_via_grid(url, item_selector=None, timeout=25):
 ```python
 from scrapling.fetchers import DynamicSession
 
-with DynamicSession(headless=True) as session:
+# 세션 쪽에는 래퍼가 없으므로 google_search=False 를 직접 넘긴다 — 3단은 사다리 A 이고,
+# 기본값 True 는 오지 않은 곳(google)에서 왔다고 말하는 Referer 를 붙인다.
+with DynamicSession(headless=True, google_search=False) as session:
     page = session.fetch("<URL>", network_idle=True)
     all_items = []
     prev_count = 0
@@ -374,7 +380,7 @@ with DynamicSession(headless=True) as session:
 
 ```python
 from scrapling.spiders import Spider, Request, Response
-from scrapling.fetchers import AsyncFetcherSession
+from utils import plain_session
 
 class CollectSpider(Spider):
     name = "collector"
@@ -382,9 +388,10 @@ class CollectSpider(Spider):
     concurrent_requests = 5
 
     def configure_sessions(self, manager):
-        # 비동기 세션에는 plain_session() 래퍼가 없으므로 PLAIN_KWARGS 를 직접 넘긴다.
-        # 두 인자는 반드시 함께 끈다 — 한쪽만 끄면 불일치 지문이 되어 오히려 악화다.
-        manager.add("default", AsyncFetcherSession(impersonate=None, stealthy_headers=False))
+        # SessionManager.add() 가 받는 것은 FetcherSession 이고, 그 평문 래퍼가 plain_session() 이다.
+        # (`AsyncFetcherSession` 이라는 이름은 scrapling 에 없다 — 쓰면 ImportError 로 죽는다.)
+        # 래퍼를 쓰면 impersonate/stealthy_headers 를 짝으로 끄는 규칙이 함께 따라온다.
+        manager.add("default", plain_session(), default=True)
 
     async def parse(self, response: Response):
         for item in response.css("<ITEM_SELECTOR>"):

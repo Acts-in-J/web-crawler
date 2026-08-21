@@ -114,9 +114,9 @@ if profile_mgr.exists(domain):
 profile_mgr.save(domain, {
     "domain": domain,
     "capability": "<static|js_render|api|session>",   # ★ SSOT — 능력 수준. 비워 두면 save() 가 fetcher_type 에서 채운다
-    "fetcher_type": "<yt-dlp|RSS|oEmbed|Jina|Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체. 앞 4개는 Phase 0 공인 우회로
-    "antibot_type": "<none|cloudflare|akamai|naver_antibot|other>",
-    "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
+    "fetcher_type": "<yt-dlp|RSS|oEmbed|Jina|Fetcher|FetcherSession|DynamicFetcher|DynamicSession|Spider|playwright_spa_intercept|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체. 앞 4개는 Phase 0 공인 우회로
+    "antibot_type": "<none|cloudflare|akamai|spa_session|naver_antibot|other>",
+    "antibot_strategy": "<none|playwright_intercept|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot|authenticated_browser>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
     "site_type": "<static|csr|api|spa_session|akamai>",
     "selectors": {...},
     "pagination": {...},
@@ -131,6 +131,10 @@ profile_mgr.save(domain, {
 ```
 
 > `fetcher_type`/`antibot_strategy` 는 위 목록 안의 값으로 적는다. 문서에 없는 값을 지어내면 분류기가 사다리 칸을 판별하지 못해 저장이 거부되고, 사다리 B 로 수집해 놓고 A 쪽 값을 적으면 그 레시피가 배포 대상으로 잘못 분류된다.
+>
+> **여기 목록이 곧 분류기가 아는 전부는 아니다.** 실제 판정표는 `scripts/profile_policy.py` 의 `TOOLS` 하나뿐이고, 위 목록은 그중 흔히 쓰는 값을 추린 것이다. 적을 값이 애매하면 지어내지 말고 그 표를 직접 본다 — 표에 없는 값은 `save()` 가 `ConsentRequired` 로 거부한다(심사가 아니라 "분류기가 알아들을 수 있는 값을 달라" 는 뜻이다).
+>
+> **`robots.txt`·ToS 사유로 배포에서 빼야 하는 프로필은 `distribution: "local"` 을 명시한다.** 사다리 A(1~3단)라 자동으로는 `public` 이 되는 프로필이라도 이 선언은 무조건 인정된다(조이는 방향은 항상 통과). 사유는 `distribution_reason` 에 한 줄로 남긴다 — 예: `cafe.naver.com`, `www.instagram.com`.
 
 새 도메인 프로필을 처음 만들었다면 저장 직후 목록을 재생성한다 (위 "알려진 도메인" 블록은 생성물):
 
@@ -209,7 +213,7 @@ Phase 0: 공인 우회로 있나? ──Yes──→ yt-dlp / RSS·Atom / oEmbed
 ┌─ 사다리 A — 자동 · 통지 없음 ────────────────────────────┐
 │  API 발견?        ──Yes──→ 2단 plain_session             │
 │  정적 HTML?       ──Yes──→ 1단 plain_get                 │
-│  JS 렌더링 필요?  ──Yes──→ 3단 DynamicFetcher            │
+│  JS 렌더링 필요?  ──Yes──→ 3단 plain_dynamic             │
 └──────────────────────────────────────────────────────────┘
    │
    │ 사다리 A 소진 = 상대가 나를 식별하고 거절했다
@@ -224,7 +228,9 @@ Phase 0: 공인 우회로 있나? ──Yes──→ yt-dlp / RSS·Atom / oEmbed
 └──────────────────────────────────────────────────────────┘
 ```
 
-> **에스컬레이션 순서 = 가벼운 것부터.** 자동 체인은 `plain_get → plain_session → DynamicFetcher` 로 **사다리 A 에서 끝난다.** 그 위(`curl_cffi 그리드` · `StealthyFetcher` · `Chrome CDP`)는 능력으로 전부 남아 있되 **통지 이후에** 진입한다. Akamai 는 4·5 단이 원리적으로 안 통해 통지 후 바로 6단이다. 상세 코드는 `references/fetcher-patterns.md § F`, capability 판정 근거는 `references/antibot-strategies.md § WAF capability 라우팅`.
+> **에스컬레이션 순서 = 가벼운 것부터.** 자동 체인은 `plain_get → plain_session → plain_dynamic` 으로 **사다리 A 에서 끝난다.** 그 위(`curl_cffi 그리드` · `StealthyFetcher` · `Chrome CDP`)는 능력으로 전부 남아 있되 **통지 이후에** 진입한다. Akamai 는 4·5 단이 원리적으로 안 통해 통지 후 바로 6단이다. 상세 코드는 `references/fetcher-patterns.md § F`, capability 판정 근거는 `references/antibot-strategies.md § WAF capability 라우팅`.
+
+> **세 단 모두 래퍼를 쓴다.** 맨 `Fetcher.get()`/`FetcherSession()` 은 기본이 `impersonate="chrome"` + `stealthy_headers=True` 라 평문이 아니고, 맨 `DynamicFetcher.fetch()` 는 `google_search=True` 라 **`Referer: https://www.google.com/` 를 지어내 붙인다.** 사다리 A 는 통지 없이 도는 칸이므로 셋 다 끈 상태가 기본이다 — `plain_get()` · `plain_session()` · `plain_dynamic()`. (`fetcher_type` 에 기록하는 **어휘**는 그대로 `Fetcher`/`FetcherSession`/`DynamicFetcher` 다 — 래퍼 이름이 아니라 구현체 이름을 적는다.)
 
 > profile.json이 있는 도메인은 Akamai 탐지 시그널을 따로 안 봐도 `antibot_type` 필드로 즉시 판정된다 (`antibot_type: akamai` → `chrome_cdp` 직행). 단 그 직행도 이음매 뒤에 있다 — 이미 `consent` 기록이 있으면 통지 없음, 기록이 없으면 이번이 최초 통과이므로 그대로 통지한다.
 
@@ -260,14 +266,14 @@ chrome.exe --remote-debugging-port=9222 \
 ## Infinite Scroll 처리 (우선순위)
 
 1. **API 직행**: 정찰 시 infinite scroll의 underlying API 엔드포인트 발견 → `plain_session()`으로 직접 호출 (가장 빠르고 안정적). 맨 `FetcherSession()`은 기본값이 `impersonate="chrome"` + `stealthy_headers=True` 라 사다리 2단이 아니다
-2. **DynamicFetcher 스크롤**: API 없으면 `DynamicSession`으로 스크롤 → `network_idle=True` 대기 → 추출 반복
+2. **렌더 스크롤**: API 없으면 `DynamicSession(headless=True, google_search=False)`으로 스크롤 → `network_idle=True` 대기 → 추출 반복. 세션 쪽에는 래퍼가 없으므로 `google_search=False`를 직접 넘긴다 (기본값 `True`는 가짜 Google Referer를 붙인다)
 3. **agent-browser 폴백**: 위 둘 다 실패 시 agent-browser로 수동 스크롤 → DOM 추출 → Scrapling Selector로 파싱
 
 ## Fetcher 에스컬레이션
 
 수집 실패 시 상위 Fetcher로 전환하되, **자동 전환은 사다리 A 안에서만 일어난다**:
 ```
-[자동] plain_get → plain_session → DynamicFetcher
+[자동] plain_get → plain_session → plain_dynamic
    │
    ■ 통지 게이트 ■  [진행 / 중단] — '진행' 이면 근거를 묻지 않고 그대로 간다
    │
@@ -390,13 +396,17 @@ import json
 from utils import plain_session
 
 # 1. agent-browser로 수동 로그인 후 쿠키 추출 → output/<도메인>/cookies.json 저장
+#    ★ 수동 로그인 전에 `agent-browser close --all` — 데몬이 떠 있으면 --headed 가 무시된다
 with open("output/<도메인>/cookies.json") as f:
-    cookies = json.load(f)
+    cookies = json.load(f)   # {"name": "value", ...}
 
 # 2. 사다리 2단 세션에 주입 (위장 인자 없음 — 로그인 쿠키는 위장이 아니다)
+#    ★ 쿠키는 **요청별 인자**로 넘긴다. `session.cookies.update(...)` 는 동작하지 않는다 —
+#      plain_session() 이 돌려주는 _SyncSessionLogic 에는 .cookies 속성이 없다.
 with plain_session() as session:
-    session.cookies.update(cookies)
-    resp = session.get(url)
+    resp = session.get(url, cookies=cookies)
 ```
 
-쿠키 파일은 `.gitignore`의 `**/cookies*.json` 패턴으로 자동 차단된다.
+쿠키 파일은 `.gitignore`의 `**/cookies*.json` 패턴으로 자동 차단된다. 전용 프로필 창에서
+받은 상태를 저장했다면 **대상 도메인분만 골라** 넣는다 — 다른 사이트 세션까지 프로젝트
+폴더로 들어오지 않게.

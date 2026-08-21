@@ -64,9 +64,11 @@ if profile_mgr.exists(domain):
 profile_mgr.save(domain, {
     "domain": domain,
     "capability": "<static|js_render|api|session>",   # ★ SSOT — 능력 수준. 비워 두면 save() 가 fetcher_type 에서 채운다
-    "fetcher_type": "<Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION|yt-dlp|RSS|oEmbed|Jina>",
-    "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot>",
+    "fetcher_type": "<Fetcher|FetcherSession|DynamicFetcher|DynamicSession|Spider|playwright_spa_intercept|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION|yt-dlp|RSS|oEmbed|Jina>",
+    "antibot_strategy": "<none|playwright_intercept|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot|authenticated_browser>",
     "site_type": "<static|csr|api|spa_session|akamai>",
+    # robots·ToS 사유로 배포에서 빼야 하면 명시한다 — 사다리 A 여도 이 선언은 무조건 인정된다
+    "distribution": "local", "distribution_reason": "<한 줄>",
     "selectors": {<MAPPING>},
     "pagination": {<CONFIG>},
     "api_endpoints": [<LIST>],
@@ -145,6 +147,11 @@ if verdict["crawl_delay"]:
 - agent-browser 접근 **최대 2회** 시도
 - 2회 실패 시 **Step 3 의 이음매 통지 게이트로 돌아간다** — 정찰 단계에서도 사다리 B 진입은 사용자 확인을 거친다
 - 같은 도메인에 **5분 내 3회 이상 접근하지 않음**
+- **정찰 JS 는 ASCII 로만 쓴다.** `agent-browser eval -b <base64>` 가 페이로드를 UTF-8 이 아닌
+  인코딩으로 디코딩해 한글이 깨진다 — `/입찰|공고/` 가 `/?낆같|怨듦퀬/` 로 들어가
+  `SyntaxError: Invalid regular expression` 이 난다. 한글이 필요하면
+  `'\uC785\uCC30'`(= 입찰) 처럼 유니코드 이스케이프로 적는다. (파일을 만들 때도 `Get-Content -Raw` 는 UTF-8 을
+  ANSI 로 읽으므로 애초에 ASCII 로 생성하는 편이 안전하다.)
 
 ### 정찰 항목
 1. 스냅샷 + DOM 구조 확인
@@ -232,9 +239,22 @@ agent-browser를 못 쓰고 현재 Codex 세션에 `chrome:control-chrome` 스�
 ### Step 2-A: 인증 처리
 
 로그인이 필요한 경우:
-1. 사용자에게 안내 → agent-browser로 로그인 페이지 열기
-2. 수동 로그인 완료 대기
-3. 쿠키/JWT 추출 → `save_cookies()` 또는 `save_auth_token()`으로 저장
+
+0. **먼저 `agent-browser close --all`.** 정찰로 이미 데몬이 떠 있으면 이후 호출의
+   `--headed`·`--profile`·`--session` 이 **경고 한 줄만 남기고 무시된다**
+   (`⚠ --profile ignored: daemon already running`). 창이 안 뜬 채로 "로그인해 주세요" 라고
+   말하게 되는 실패가 여기서 나온다.
+1. 전용 프로필로 **보이는 창**을 띄운다 — `agent-browser --headed --profile <경로> open <로그인URL>`.
+   사용자의 평소 Chrome 프로필을 붙이지 않는다(다른 사이트 세션까지 딸려온다).
+   경로를 주면 로그인이 그 디렉터리에 남아 다음 호출에서도 유지된다.
+2. 사용자에게 안내하고 **직접 로그인하도록 기다린다.** ID/PW 를 대신 입력하지 않고,
+   코드·파일·메모리 어디에도 저장하지 않는다. CAPTCHA·2단계 인증도 사용자가 처리한다.
+3. 로그인 여부를 **쿠키 이름으로 확인한다** — 값은 출력하지 않는다.
+   (예: 네이버 `NID_AUT`/`NID_SES`, 인스타그램 `sessionid`/`ds_user_id`)
+4. `agent-browser state save <스크래치경로>` 로 받은 뒤 **대상 도메인분만 골라**
+   `output/<도메인>/cookies.json` 에 넣는다 — 프로필 전체 쿠키를 프로젝트 폴더로 옮기지 않는다.
+5. 수집 시 주입은 **요청별 인자**로 한다: `session.get(url, cookies=jar)`.
+   `session.cookies.update(jar)` 는 동작하지 않는다(`_SyncSessionLogic` 에 `.cookies` 없음).
 
 ---
 
@@ -363,6 +383,7 @@ Step 3에서 결정한 전략에 맞는 코드 패턴을 `references/fetcher-pat
 3. **RateLimiter** — `scripts/utils.py`의 RateLimiter 사용
 4. **부분 데이터 저장** — 100건마다 raw_data.json에 중간 저장
 5. **FETCHER_CHAIN 에스컬레이션** — 연속 2회 실패 시 상위 티어로 전환. **체인은 사다리 A(3단)에서 끝난다** — 사다리 B 진입은 Step 3 의 통지 게이트를 거친다
+6. **0건이면 기존 산출물을 덮지 않는다** — 같은 출력 폴더로 재실행하는 것은 흔한 일이고, 실패한 재실행이 성공했던 `raw_data.json` 을 빈 배열로 밀어버리면 "이번 실패" 가 "지난 성공 소실" 이 된다. 쓰기 직전에 `if not data: return` 로 막거나, 기존 파일이 있으면 `raw_data.json.bak` 로 옮긴 뒤 쓴다
 
 > **except 블록에서 반드시 `continue`** — 절대 `break`로 중단하지 않는다.
 
@@ -472,10 +493,12 @@ profile_mgr = DomainProfile()  # base_dir=./fingerprints
 profile_mgr.save(domain, {
     "domain": domain,
     "capability": "<static|js_render|api|session>",   # ★ SSOT — 능력 수준. 비워 두면 save() 가 fetcher_type 에서 채운다
-    "fetcher_type": "<yt-dlp|RSS|oEmbed|Jina|Fetcher|FetcherSession|DynamicFetcher|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체. 앞 4개는 Step 1-B Phase 0 공인 우회로
-    "antibot_type": "<none|cloudflare|akamai|naver_antibot|other>",
-    "antibot_strategy": "<none|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
+    "fetcher_type": "<yt-dlp|RSS|oEmbed|Jina|Fetcher|FetcherSession|DynamicFetcher|DynamicSession|Spider|playwright_spa_intercept|curl_cffi_grid|StealthyFetcher|chrome_cdp|API_SESSION>",   # 파생 — 현재 엔진에서의 구현체. 앞 4개는 Step 1-B Phase 0 공인 우회로
+    "antibot_type": "<none|cloudflare|akamai|spa_session|naver_antibot|other>",
+    "antibot_strategy": "<none|playwright_intercept|impersonate|curl_cffi_grid|stealthy|chrome_cdp|naver_antibot|authenticated_browser>",   # 실제로 쓴 대응. 사다리 B 를 썼으면 반드시 그 값을 적는다
     "site_type": "<static|csr|api|spa_session|akamai>",
+    # robots·ToS 사유로 배포에서 빼야 하면 명시 — 사다리 A 여도 이 선언은 무조건 인정된다
+    "distribution": "local", "distribution_reason": "<한 줄>",
     "selectors": {<필드: 셀렉터>},
     "pagination": {<config — type/param/limit 등>},
     "api_endpoints": [{<url, method, params, field_mapping>}],
