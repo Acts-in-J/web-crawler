@@ -330,7 +330,7 @@ def test_acceptable_use_does_not_speak_for_the_agent():
 
 def _readme_operation_summary_section() -> str:
     """README.md 의 '작동 방식 (요약)' 절만 잘라 반환 (다음 '##' 절 직전까지)."""
-    return _section(README, "## 작동 방식 (요약)", "## 도메인 프로필")
+    return _section(README, "## 작동 방식 (요약)", "## Fingerprint 도메인 별 수집 레시피 기록")
 
 
 def test_readme_operation_summary_reask_is_keyed_to_consent_not_domain():
@@ -354,7 +354,7 @@ def test_readme_operation_summary_reask_is_keyed_to_consent_not_domain():
 
 FREQUENCY_CLAIM_SECTIONS = [
     pytest.param(
-        README, "## 도메인 프로필 (재수집 가속)", "## 레포 구조",
+        README, "## Fingerprint 도메인 별 수집 레시피 기록 (재수집 가속)", "## 레포 구조",
         "확인이 면제되는 근거는 도메인이 아니라 프로필이 지금 들고 있는 `consent` 기록입니다",
         id="README.md",
     ),
