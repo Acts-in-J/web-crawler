@@ -10,8 +10,7 @@ function doGet(e) {
   const template = HtmlService.createTemplateFromFile("Index");
   return template.evaluate()
     .setTitle("경쟁사 리뷰 인텔리전스 | Syncrown Review Intelligence")
-    .addMetaTag("viewport", "width=device-width, initial-scale=1.0")
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    .addMetaTag("viewport", "width=device-width, initial-scale=1.0");
 }
 
 function include(filename) {
@@ -54,6 +53,31 @@ function getReviewDashboardData(spreadsheetIdOverride) {
     }
 
     const headers = values[0].map(h => String(h).trim().toLowerCase());
+
+    const requiredHeaders = [
+      "source_domain",
+      "product_id",
+      "product_name",
+      "brand",
+      "review_id",
+      "review_date",
+      "rating",
+      "review_text",
+      "product_option",
+      "helpful_count",
+      "photo_review",
+      "video_review",
+      "collected_at"
+    ];
+
+    const missingHeaders = requiredHeaders.filter(h => headers.indexOf(h) === -1);
+    if (missingHeaders.length > 0) {
+      Logger.log("Missing required headers in 01_REVIEW_RAW: " + missingHeaders.join(", "));
+      return {
+        status: "error",
+        message: "리뷰 데이터 형식이 올바르지 않습니다. 필요한 컬럼을 확인해 주세요."
+      };
+    }
     
     // Header name to index mapping
     const colIndex = {

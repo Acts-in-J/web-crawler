@@ -183,18 +183,12 @@
       document.getElementById('kpiRatingStars').textContent = getStarString(avg);
     }
 
-    // Recent 30 Days (Relative to max date in filtered dataset or current date)
-    let maxDateMs = Date.now();
-    if (filteredReviews.length > 0) {
-      const dates = filteredReviews.map(r => new Date(r.review_date).getTime()).filter(t => !isNaN(t));
-      if (dates.length > 0) {
-        maxDateMs = Math.max(...dates);
-      }
-    }
-    const thirtyDaysAgoMs = maxDateMs - (30 * 24 * 60 * 60 * 1000);
+    // Recent 30 Days (Current Date Based)
+    const now = Date.now();
+    const thirtyDaysAgoMs = now - (30 * 24 * 60 * 60 * 1000);
     const recent30DaysCount = filteredReviews.filter(r => {
       const t = new Date(r.review_date).getTime();
-      return !isNaN(t) && t >= thirtyDaysAgoMs;
+      return !isNaN(t) && t >= thirtyDaysAgoMs && t <= now;
     }).length;
 
     document.getElementById('kpiRecent30Days').textContent = recent30DaysCount.toLocaleString();

@@ -24,6 +24,7 @@ class TestDashboardFileContracts:
             assert os.path.isfile(fpath), f"필수 파일 누락: {fname}"
 
     def test_appsscript_manifest_structure(self):
+        """MVP 내부 검토용 엄격한 권한 계약 (USER_DEPLOYING & MYSELF)."""
         manifest_path = os.path.join(DASHBOARD_DIR, "appsscript.json")
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
@@ -31,8 +32,8 @@ class TestDashboardFileContracts:
         assert manifest.get("timeZone") == "Asia/Seoul"
         assert manifest.get("runtimeVersion") == "V8"
         assert "webapp" in manifest
-        assert manifest["webapp"].get("executeAs") in ["USER_DEPLOYING", "USER_ACCESSING"]
-        assert manifest["webapp"].get("access") in ["MYSELF", "DOMAIN", "ANYONE_ANONYMOUS"]
+        assert manifest["webapp"].get("executeAs") == "USER_DEPLOYING"
+        assert manifest["webapp"].get("access") == "MYSELF"
 
     def test_no_niimbot_hardcoding_in_backend_or_frontend(self):
         """Code.gs, Index.html, Scripts.html 등에 특정 브랜드/상품 ID가 하드코딩되어 있지 않은지 검증."""
@@ -50,6 +51,29 @@ class TestDashboardFileContracts:
                 match = pattern.search(content)
                 assert match is None, f"{fname} 에 특정 브랜드/상품 정보가 하드코딩되어 있습니다: {match.group(0)}"
 
+    def test_no_xframe_allowall_in_code_gs(self):
+        """Code.gs doGet()에 setXFrameOptionsMode(ALLOWALL)가 없어야 함."""
+        code_gs_path = os.path.join(DASHBOARD_DIR, "Code.gs")
+        with open(code_gs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "setXFrameOptionsMode" not in content, "Code.gs 에 불필요한 setXFrameOptionsMode 가 존재합니다."
+        assert "ALLOWALL" not in content, "Code.gs 에 불필요한 ALLOWALL 설정이 존재합니다."
+
+    def test_required_header_validation_in_code_gs(self):
+        """Code.gs getReviewDashboardData()에 13개 필수 헤더 검증 로직이 포함되어야 함."""
+        code_gs_path = os.path.join(DASHBOARD_DIR, "Code.gs")
+        with open(code_gs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        required_headers = [
+            "source_domain", "product_id", "product_name", "brand",
+            "review_id", "review_date", "rating", "review_text",
+            "product_option", "helpful_count", "photo_review",
+            "video_review", "collected_at"
+        ]
+        for header in required_headers:
+            assert header in content, f"Code.gs 에 필수 헤더 '{header}' 검증이 누락되었습니다."
+
 
 # ---------------------------------------------------------------------------
 # 멀티 프로덕트 데이터 집계 Pure Python Reference Engine (테스트용)
@@ -58,7 +82,8 @@ class TestDashboardFileContracts:
 
 def calculate_dashboard_metrics(reviews: list[dict], selected_product: str = "all",
                                  start_date: str = "", end_date: str = "",
-                                 selected_rating: str = "all", keyword: str = "") -> dict:
+                                 selected_rating: str = "all", keyword: str = "",
+                                 reference_time_ms: float | None = None) -> dict:
     """Dashboard 클라이언트 로직과 1:1로 일치하는 순수 파이썬 데이터 집계 엔진."""
     # Filter
     filtered = []
@@ -97,20 +122,25 @@ def calculate_dashboard_metrics(reviews: list[dict], selected_product: str = "al
     # Avg Rating
     avg_rating = round(sum(r.get("rating", 0) for r in filtered) / total, 2)
 
-    # Recent 30 Days (Relative to max date in filtered dataset)
-    timestamps = []
+    # Recent 30 Days (Current Date / Reference Time Based: thirty_days_ago <= t <= now)
+    now_ms = reference_time_ms if reference_time_ms is not None else (datetime.now(timezone.utc).timestamp() * 1000)
+    thirty_days_ago_ms = now_ms - (30 * 24 * 3600 * 1000)
+
+    recent_30 = 0
     for r in filtered:
-        d_str = str(r.get("review_date", ""))[:10]
+        d_str = str(r.get("review_date", ""))
         if d_str:
             try:
-                dt = datetime.strptime(d_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                timestamps.append(dt.timestamp())
+                # ISO Format parsing
+                if "T" in d_str:
+                    dt = datetime.fromisoformat(d_str.replace("Z", "+00:00"))
+                else:
+                    dt = datetime.strptime(d_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                t_ms = dt.timestamp() * 1000
+                if thirty_days_ago_ms <= t_ms <= now_ms:
+                    recent_30 += 1
             except ValueError:
                 pass
-
-    max_ts = max(timestamps) if timestamps else datetime.now(timezone.utc).timestamp()
-    thirty_days_ago = max_ts - (30 * 24 * 3600)
-    recent_30 = sum(1 for ts in timestamps if ts >= thirty_days_ago)
 
     # Photo Rate
     photo_count = sum(1 for r in filtered if r.get("photo_review"))
@@ -234,3 +264,27 @@ class TestDashboardAggregationLogic:
         assert res["photo_rate"] == 0
         assert res["rating_counts"] == {5: 0, 4: 0, 3: 0, 2: 0, 1: 0}
         assert res["monthly_trend"] == {}
+
+    def test_recent_30_days_current_date_based(self, multi_product_reviews):
+        ref_dt = datetime(2026, 8, 30, 0, 0, 0, tzinfo=timezone.utc)
+        ref_ms = ref_dt.timestamp() * 1000
+
+        res = calculate_dashboard_metrics(multi_product_reviews, reference_time_ms=ref_ms)
+        # r1: 2026-08-10 (20 days ago -> IN)
+        # r2: 2026-08-15 (15 days ago -> IN)
+        # r3: 2026-07-20 (41 days ago -> OUT)
+        # r4: 2026-08-28 (2 days ago -> IN)
+        assert res["recent_30_days"] == 3
+
+    def test_recent_30_days_excludes_future_dates(self):
+        ref_dt = datetime(2026, 8, 30, 0, 0, 0, tzinfo=timezone.utc)
+        ref_ms = ref_dt.timestamp() * 1000
+
+        future_reviews = [
+            {"review_date": "2026-08-25T00:00:00Z", "rating": 5},  # IN
+            {"review_date": "2026-09-05T00:00:00Z", "rating": 5},  # FUTURE -> EXCLUDED
+            {"review_date": "2026-06-01T00:00:00Z", "rating": 5},  # OLD -> EXCLUDED
+        ]
+
+        res = calculate_dashboard_metrics(future_reviews, reference_time_ms=ref_ms)
+        assert res["recent_30_days"] == 1
