@@ -43,6 +43,9 @@ __pycache__/
 **/*auth*.json
 **/*token*.json
 **/*secret*
+# Google Sheets — Service Account JSON + env 설정 파일
+**/*credentials*.json
+gsheets.env
 .DS_Store
 
 # 사이트 수집 아카이브 — 독립 git 저장소 + 대용량 tar.gz (모노레포에서 제외)

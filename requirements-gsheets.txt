@@ -1,0 +1,19 @@
+# Google Sheets Output Adapter — optional 의존성
+#
+# 기본 크롤링 환경(requirements.txt)과 분리된 선택적 확장이다.
+# Google Sheets 저장 기능이 필요한 경우에만 설치한다:
+#
+#   pip install -r requirements-gsheets.txt
+#
+# 이 패키지들이 없어도 기존 Excel(crawl_result.xlsx) 출력은 정상 동작한다.
+# 미설치 상태에서 export_gsheets.py 를 호출하면 GsheetsNotConfigured 예외가
+# 발생하며 명확한 설치 안내를 반환한다.
+
+# Google API 인증 (Service Account 방식)
+google-auth>=2.38
+
+# Google Sheets / Drive REST API 클라이언트
+google-api-python-client>=2.165
+
+# google-auth 의 httplib2 transport (google-api-python-client 가 내부에서 사용)
+google-auth-httplib2>=0.2
