@@ -337,6 +337,142 @@ class TestExportToGsheetsUnit:
         assert len(rows_arg[0][0]) > 0  # crawl_id 가 빈 문자열이 아님
 
 
+DUMMY_REVIEW_DATA = [
+    {
+        "product_id": "9308947164",
+        "product_name": "님봇 D110 라벨프린터",
+        "brand": "NIIMBOT",
+        "review_id": "rev-1001",
+        "review_date": "2026-09-01T12:00:00Z",
+        "rating": 5,
+        "review_text": "출력이 깔끔하고 너무 편리해요!",
+        "product_option": "화이트",
+        "helpful_count": 3,
+        "photo_review": True,
+        "video_review": False,
+    },
+    {
+        "product_id": "9308947164",
+        "product_name": "님봇 D110 라벨프린터",
+        "brand": "NIIMBOT",
+        "review_id": "rev-1002",
+        "review_date": "2026-09-01T12:05:00Z",
+        "rating": 4,
+        "review_text": "배송 빠르고 가성비 좋습니다.",
+        "product_option": "핑크",
+        "helpful_count": 0,
+        "photo_review": False,
+        "video_review": False,
+    },
+]
+
+
+class TestReviewDataConversion:
+    """리뷰 dict → 01_REVIEW_RAW 시트 행 변환 검증."""
+
+    def test_review_columns_length(self):
+        from export_gsheets import REVIEW_RAW_COLUMNS
+        assert len(REVIEW_RAW_COLUMNS) == 14
+
+    def test_item_to_review_raw_row_values(self):
+        from export_gsheets import REVIEW_RAW_COLUMNS, _item_to_review_raw_row
+        row = _item_to_review_raw_row(DUMMY_REVIEW_DATA[0], "crawl-001", "brand.naver.com")
+        assert len(row) == len(REVIEW_RAW_COLUMNS)
+        assert row[0] == "crawl-001"
+        assert row[1] == "brand.naver.com"
+        assert row[2] == "9308947164"
+        assert row[3] == "님봇 D110 라벨프린터"
+        assert row[4] == "NIIMBOT"
+        assert row[5] == "rev-1001"
+        assert row[6] == "2026-09-01T12:00:00Z"
+        assert row[7] == 5
+        assert row[8] == "출력이 깔끔하고 너무 편리해요!"
+        assert row[9] == "화이트"
+        assert row[10] == 3
+        assert row[11] is True
+        assert row[12] is False
+
+    def test_pii_excluded_from_review_columns(self):
+        """개인식별 필드(writerId, maskedWriterId, writerMemberNo, orderNo 등)가 컬럼 정의에 없음."""
+        from export_gsheets import REVIEW_RAW_COLUMNS
+        pii_terms = ["writerId", "writer", "memberNo", "orderNo", "maskedWriterId", "profileImage"]
+        for col in REVIEW_RAW_COLUMNS:
+            for pii in pii_terms:
+                assert pii.lower() not in col.lower()
+
+
+class TestExportReviewsToGsheetsUnit:
+    """export_reviews_to_gsheets() 및 중복 제거 로직 단위 테스트."""
+
+    def _patched_review_export(self, monkeypatch, tmp_path, existing_keys=None):
+        fake_cred = tmp_path / "service_account.json"
+        fake_cred.write_text(json.dumps({"type": "service_account"}))
+        monkeypatch.setenv("GSHEET_SPREADSHEET_ID", "fake-id")
+
+        from export_gsheets import GsheetsAdapter
+        adapter_instance = MagicMock(spec=GsheetsAdapter)
+        adapter_instance.list_sheet_titles.return_value = ["01_REVIEW_RAW"]
+        adapter_instance.get_existing_review_keys.return_value = existing_keys or set()
+        adapter_instance.append_rows.side_effect = lambda sheet, rows: len(rows)
+
+        return fake_cred, adapter_instance
+
+    def test_export_reviews_initial_insert(self, monkeypatch, tmp_path):
+        fake_cred, adapter_mock = self._patched_review_export(monkeypatch, tmp_path)
+
+        import export_gsheets
+        with patch.object(export_gsheets.GsheetsAdapter, "from_credentials", return_value=adapter_mock):
+            result = export_gsheets.export_reviews_to_gsheets(
+                DUMMY_REVIEW_DATA,
+                credentials_path=str(fake_cred),
+                spreadsheet_id="fake-id",
+                source_domain="brand.naver.com",
+            )
+
+        assert result["received"] == 2
+        assert result["inserted"] == 2
+        assert result["skipped_duplicate"] == 0
+
+    def test_export_reviews_deduplication(self, monkeypatch, tmp_path):
+        """동일 키가 존재할 경우 중복 1건 skip, 1건 추가."""
+        existing = {("brand.naver.com", "9308947164", "rev-1001")}
+        fake_cred, adapter_mock = self._patched_review_export(monkeypatch, tmp_path, existing_keys=existing)
+
+        import export_gsheets
+        with patch.object(export_gsheets.GsheetsAdapter, "from_credentials", return_value=adapter_mock):
+            result = export_gsheets.export_reviews_to_gsheets(
+                DUMMY_REVIEW_DATA,
+                credentials_path=str(fake_cred),
+                spreadsheet_id="fake-id",
+                source_domain="brand.naver.com",
+            )
+
+        assert result["received"] == 2
+        assert result["inserted"] == 1
+        assert result["skipped_duplicate"] == 1
+
+    def test_export_reviews_all_duplicates_skipped(self, monkeypatch, tmp_path):
+        """모든 데이터가 이미 존재하는 키일 경우 inserted=0, skipped_duplicate=2."""
+        existing = {
+            ("brand.naver.com", "9308947164", "rev-1001"),
+            ("brand.naver.com", "9308947164", "rev-1002"),
+        }
+        fake_cred, adapter_mock = self._patched_review_export(monkeypatch, tmp_path, existing_keys=existing)
+
+        import export_gsheets
+        with patch.object(export_gsheets.GsheetsAdapter, "from_credentials", return_value=adapter_mock):
+            result = export_gsheets.export_reviews_to_gsheets(
+                DUMMY_REVIEW_DATA,
+                credentials_path=str(fake_cred),
+                spreadsheet_id="fake-id",
+                source_domain="brand.naver.com",
+            )
+
+        assert result["received"] == 2
+        assert result["inserted"] == 0
+        assert result["skipped_duplicate"] == 2
+
+
 # ---------------------------------------------------------------------------
 # Live Write — GOOGLE_APPLICATION_CREDENTIALS + GSHEET_SPREADSHEET_ID 필요
 # ---------------------------------------------------------------------------

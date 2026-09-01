@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 # 공개 시트 이름 — 향후 02_MASTER / 04_METRICS_DAILY 추가 시 여기만 확장
 # ---------------------------------------------------------------------------
 SHEET_RAW = "01_RAW"
+SHEET_REVIEW_RAW = "01_REVIEW_RAW"
 SHEET_CRAWL_LOG = "03_CRAWL_LOG"
 
 # 01_RAW 컬럼 순서 (헤더 행과 동일해야 한다)
@@ -53,6 +54,24 @@ RAW_COLUMNS: list[str] = [
     "region",
     "status",
     "raw_json",
+]
+
+# 01_REVIEW_RAW 컬럼 순서
+REVIEW_RAW_COLUMNS: list[str] = [
+    "crawl_id",
+    "source_domain",
+    "product_id",
+    "product_name",
+    "brand",
+    "review_id",
+    "review_date",
+    "rating",
+    "review_text",
+    "product_option",
+    "helpful_count",
+    "photo_review",
+    "video_review",
+    "collected_at",
 ]
 
 # 03_CRAWL_LOG 컬럼 순서
@@ -173,6 +192,27 @@ def _item_to_raw_row(item: dict, crawl_id: str, source_domain: str) -> list[Any]
         item.get("region", ""),
         item.get("status", item.get("availability", "")),
         raw,
+    ]
+
+
+def _item_to_review_raw_row(item: dict, crawl_id: str, source_domain: str) -> list[Any]:
+    """item dict를 01_REVIEW_RAW 행(REVIEW_RAW_COLUMNS 순)으로 변환한다."""
+    now = datetime.now(timezone.utc).isoformat()
+    return [
+        crawl_id,
+        source_domain or item.get("source_domain", ""),
+        str(item.get("product_id", "")),
+        str(item.get("product_name", "")),
+        str(item.get("brand", "")),
+        str(item.get("review_id", item.get("id", ""))),
+        str(item.get("review_date", item.get("createDate", ""))),
+        item.get("rating", item.get("reviewScore", "")),
+        str(item.get("review_text", item.get("reviewContent", ""))),
+        str(item.get("product_option", item.get("productOptionContent", ""))),
+        item.get("helpful_count", item.get("helpCount", "")),
+        bool(item.get("photo_review", False)),
+        bool(item.get("video_review", False)),
+        str(item.get("collected_at", now)),
     ]
 
 
@@ -309,6 +349,31 @@ class GsheetsAdapter:
         values = result.get("values", [])
         return len(values)
 
+    def get_existing_review_keys(
+        self, sheet_title: str = SHEET_REVIEW_RAW
+    ) -> set[tuple[str, str, str]]:
+        """01_REVIEW_RAW 시트에서 이미 저장된 (source_domain, product_id, review_id) 키 집합을 반환한다."""
+        existing = self.list_sheet_titles()
+        if sheet_title not in existing:
+            return set()
+        result = (
+            self._sheets.values()
+            .get(spreadsheetId=self.spreadsheet_id, range=f"{sheet_title}!A:F")
+            .execute()
+        )
+        values = result.get("values", [])
+        if not values or len(values) <= 1:
+            return set()
+
+        keys = set()
+        for row in values[1:]:
+            domain = str(row[1]).strip() if len(row) > 1 else ""
+            prod_id = str(row[2]).strip() if len(row) > 2 else ""
+            rev_id = str(row[5]).strip() if len(row) > 5 else ""
+            if domain and prod_id and rev_id:
+                keys.add((domain, prod_id, rev_id))
+        return keys
+
 
 # ---------------------------------------------------------------------------
 # 공개 진입점
@@ -367,6 +432,81 @@ def export_to_gsheets(
         result["raw_rows"] = adapter.append_rows(SHEET_RAW, raw_rows)
 
     # 03_CRAWL_LOG
+    if crawl_log is not None:
+        if "crawl_id" not in crawl_log:
+            crawl_log = {**crawl_log, "crawl_id": crawl_id}
+        if "source_domain" not in crawl_log:
+            crawl_log = {**crawl_log, "source_domain": source_domain}
+        adapter.ensure_sheet(SHEET_CRAWL_LOG, CRAWL_LOG_COLUMNS)
+        log_row = _crawl_log_to_row(crawl_log)
+        result["log_rows"] = adapter.append_rows(SHEET_CRAWL_LOG, [log_row])
+
+    return result
+
+
+def export_reviews_to_gsheets(
+    data: list[dict],
+    crawl_log: dict | None = None,
+    *,
+    spreadsheet_id: str | None = None,
+    credentials_path: str | None = None,
+    crawl_id: str | None = None,
+    source_domain: str = "",
+) -> dict[str, int]:
+    """리뷰 수집 결과를 Google Sheets (01_REVIEW_RAW 및 03_CRAWL_LOG)에 중복 제거 후 저장한다.
+
+    Args:
+        data: 리뷰 수집 결과 딕셔너리 리스트. 각 항목이 01_REVIEW_RAW 시트에 1행이 된다.
+        crawl_log: 수집 실행 메타데이터. None이면 03_CRAWL_LOG는 건너뛴다.
+        spreadsheet_id: 대상 Spreadsheet ID.
+        credentials_path: Service Account JSON 절대경로.
+        crawl_id: 수집 실행 식별자. None이면 UTC timestamp로 자동 생성한다.
+        source_domain: 수집 대상 도메인 (예: "brand.naver.com").
+
+    Returns:
+        {"received": N, "inserted": M, "skipped_duplicate": K, "log_rows": L}
+
+    Raises:
+        GsheetsNotConfigured: 라이브러리 미설치 또는 인증정보 누락.
+    """
+    creds = _resolve_credentials(credentials_path)
+    sid = _resolve_spreadsheet_id(spreadsheet_id)
+
+    if crawl_id is None:
+        crawl_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    adapter = GsheetsAdapter.from_credentials(sid, creds)
+    result: dict[str, int] = {
+        "received": len(data),
+        "inserted": 0,
+        "skipped_duplicate": 0,
+        "log_rows": 0,
+    }
+
+    if data:
+        adapter.ensure_sheet(SHEET_REVIEW_RAW, REVIEW_RAW_COLUMNS)
+        existing_keys = adapter.get_existing_review_keys(SHEET_REVIEW_RAW)
+
+        rows_to_insert = []
+        skipped = 0
+
+        for item in data:
+            s_domain = source_domain or str(item.get("source_domain", ""))
+            p_id = str(item.get("product_id", ""))
+            r_id = str(item.get("review_id", item.get("id", "")))
+            key = (s_domain.strip(), p_id.strip(), r_id.strip())
+
+            if key in existing_keys:
+                skipped += 1
+            else:
+                existing_keys.add(key)
+                row = _item_to_review_raw_row(item, crawl_id, s_domain)
+                rows_to_insert.append(row)
+
+        result["skipped_duplicate"] = skipped
+        if rows_to_insert:
+            result["inserted"] = adapter.append_rows(SHEET_REVIEW_RAW, rows_to_insert)
+
     if crawl_log is not None:
         if "crawl_id" not in crawl_log:
             crawl_log = {**crawl_log, "crawl_id": crawl_id}
