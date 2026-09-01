@@ -160,7 +160,7 @@ def _item_to_raw_row(item: dict, crawl_id: str, source_domain: str) -> list[Any]
     return [
         crawl_id,
         source_domain,
-        item.get("source_url", item.get("url", "")),
+        item.get("source_url", item.get("url", item.get("product_url", ""))),
         item.get("collected_at", now),
         item.get("item_key", item.get("id", "")),
         item.get("item_name", item.get("name", item.get("title", ""))),
@@ -171,7 +171,7 @@ def _item_to_raw_row(item: dict, crawl_id: str, source_domain: str) -> list[Any]
         item.get("rating", ""),
         item.get("review_count", ""),
         item.get("region", ""),
-        item.get("status", ""),
+        item.get("status", item.get("availability", "")),
         raw,
     ]
 
