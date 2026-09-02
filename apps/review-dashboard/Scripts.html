@@ -412,6 +412,14 @@
      Excel Import (.xlsx) Client Functions
      ========================================================================== */
 
+  function makeReviewDedupKey(sourceDomain, productId, reviewId) {
+    return JSON.stringify([
+      String(sourceDomain || "").trim(),
+      String(productId || "").trim(),
+      String(reviewId || "").trim()
+    ]);
+  }
+
   function openImportModal() {
     resetImportForm();
     document.getElementById('importModal').style.display = 'flex';
@@ -504,7 +512,7 @@
     const existingKeySet = new Set();
     allReviews.forEach(r => {
       if (r.source_domain && r.product_id && r.review_id) {
-        existingKeySet.add(`${r.source_domain}_${r.product_id}_${r.review_id}`);
+        existingKeySet.add(makeReviewDedupKey(r.source_domain, r.product_id, r.review_id));
       }
     });
 
@@ -529,7 +537,7 @@
         return;
       }
 
-      const key = `${sourceDomain}_${productId}_${reviewId}`;
+      const key = makeReviewDedupKey(sourceDomain, productId, reviewId);
 
       if (existingKeySet.has(key)) {
         existingDedupCount++;

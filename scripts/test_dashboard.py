@@ -328,6 +328,15 @@ def sanitize_formula_python(val: str) -> str:
     return s
 
 
+def make_review_dedup_key_python(source_domain: str, product_id: str, review_id: str) -> str:
+    """Collision-safe Dedup Key helper (JSON string representation)."""
+    return json.dumps([
+        str(source_domain or "").strip(),
+        str(product_id or "").strip(),
+        str(review_id or "").strip(),
+    ])
+
+
 class TestReviewImportWorkflow:
     """A5-A2 Excel Import 관련 검증 테스트 클래스."""
 
@@ -348,6 +357,34 @@ class TestReviewImportWorkflow:
         assert sanitize_formula_python("@ATTACK") == "'@ATTACK"
         assert sanitize_formula_python("일반 리뷰 텍스트입니다.") == "일반 리뷰 텍스트입니다."
 
+    def test_dedup_key_collision_safety(self):
+        """언더스코어가 포함된 서로 다른 3-tuple 필드 값이 동일한 문자열로 충돌하지 않는지 검증."""
+        key1 = make_review_dedup_key_python("a_b", "c", "d")
+        key2 = make_review_dedup_key_python("a", "b_c", "d")
+
+        # 3-field tuple comparison
+        assert key1 != key2, "언더스코어 포함 필드 값의 Dedup Key 충돌이 발생했습니다."
+        assert key1 == json.dumps(["a_b", "c", "d"])
+        assert key2 == json.dumps(["a", "b_c", "d"])
+
+    def test_dedup_key_helper_usage_in_code_gs_and_scripts_html(self):
+        """Code.gs와 Scripts.html 모두에서 makeReviewDedupKey helper 함수가 선언되고 사용되는지 정적 계약 검증."""
+        code_gs_path = os.path.join(DASHBOARD_DIR, "Code.gs")
+        with open(code_gs_path, "r", encoding="utf-8") as f:
+            code_gs_content = f.read()
+
+        assert "function makeReviewDedupKey" in code_gs_content, "Code.gs 에 makeReviewDedupKey 정의가 누락되었습니다."
+        assert "existingKeys.add(makeReviewDedupKey" in code_gs_content, "Code.gs 의 existingKeys 에 makeReviewDedupKey 사용이 누락되었습니다."
+        assert "makeReviewDedupKey(sourceDomain, productId, reviewId)" in code_gs_content, "Code.gs 의 batchKeys 에 makeReviewDedupKey 사용이 누락되었습니다."
+
+        scripts_html_path = os.path.join(DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_html_path, "r", encoding="utf-8") as f:
+            scripts_html_content = f.read()
+
+        assert "function makeReviewDedupKey" in scripts_html_content, "Scripts.html 에 makeReviewDedupKey 정의가 누락되었습니다."
+        assert "existingKeySet.add(makeReviewDedupKey" in scripts_html_content, "Scripts.html 의 existingKeySet 에 makeReviewDedupKey 사용이 누락되었습니다."
+        assert "makeReviewDedupKey(sourceDomain, productId, reviewId)" in scripts_html_content, "Scripts.html 의 row key 에 makeReviewDedupKey 사용이 누락되었습니다."
+
     def test_import_preview_and_confirm_simulation(self):
         """Import 시뮬레이션: 수신, 신규, 파일내 중복, 기존 시트 중복, invalid 구분."""
         existing_sheet_reviews = [
@@ -367,7 +404,7 @@ class TestReviewImportWorkflow:
             {"source_domain": "brand.naver.com", "product_id": "100", "review_id": "r5", "review_text": "=1+1 공격"},
         ]
 
-        existing_keys = {f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" for r in existing_sheet_reviews}
+        existing_keys = {make_review_dedup_key_python(r["source_domain"], r["product_id"], r["review_id"]) for r in existing_sheet_reviews}
 
         file_batch_keys = set()
         new_to_append = []
@@ -384,7 +421,7 @@ class TestReviewImportWorkflow:
                 invalid_count += 1
                 continue
 
-            key = f"{s_dom}_{p_id}_{r_id}"
+            key = make_review_dedup_key_python(s_dom, p_id, r_id)
 
             if key in existing_keys:
                 existing_dedup += 1
@@ -420,16 +457,16 @@ class TestReviewImportWorkflow:
         ]
 
         # 1st Run
-        existing_keys = {f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" for r in sheet}
-        inserted_1st = [r for r in batch if f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" not in existing_keys]
+        existing_keys = {make_review_dedup_key_python(r["source_domain"], r["product_id"], r["review_id"]) for r in sheet}
+        inserted_1st = [r for r in batch if make_review_dedup_key_python(r["source_domain"], r["product_id"], r["review_id"]) not in existing_keys]
         assert len(inserted_1st) == 1
 
         # Simulate sheet append
         sheet.extend(inserted_1st)
 
         # 2nd Run with identical batch
-        existing_keys_2nd = {f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" for r in sheet}
-        inserted_2nd = [r for r in batch if f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" not in existing_keys_2nd]
+        existing_keys_2nd = {make_review_dedup_key_python(r["source_domain"], r["product_id"], r["review_id"]) for r in sheet}
+        inserted_2nd = [r for r in batch if make_review_dedup_key_python(r["source_domain"], r["product_id"], r["review_id"]) not in existing_keys_2nd]
         assert len(inserted_2nd) == 0
 
     def test_code_gs_server_side_commit_time_validation(self):

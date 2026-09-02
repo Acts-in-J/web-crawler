@@ -170,6 +170,19 @@ function getReviewDashboardData(spreadsheetIdOverride) {
 }
 
 /**
+ * Review Dedup Key 생성을 위한 Helper
+ * source_domain, product_id, review_id 3개 필드의 경계(boundary)를 보존하여
+ * 값 내에 언더스코어(_)가 포함되더라도 충돌이 발생하지 않도록 JSON 배열 형태의 문자열로 변환
+ */
+function makeReviewDedupKey(sourceDomain, productId, reviewId) {
+  return JSON.stringify([
+    String(sourceDomain || "").trim(),
+    String(productId || "").trim(),
+    String(reviewId || "").trim()
+  ]);
+}
+
+/**
  * Formula Injection 방어:
  * 텍스트가 =, +, -, @, \t, \r 등으로 시작할 경우 Google Sheets 수식 실행 방지를 위해 ' 접두어 추가
  */
@@ -241,7 +254,7 @@ function importReviewData(rawItems, spreadsheetIdOverride) {
       };
     }
 
-    // 기존 01_REVIEW_RAW의 Dedup Key (source_domain + product_id + review_id) Set 구성
+    // 기존 01_REVIEW_RAW의 Dedup Key (source_domain + product_id + review_id) Set 구성 (Collision-safe)
     const colSource = headers.indexOf("source_domain");
     const colProduct = headers.indexOf("product_id");
     const colReviewId = headers.indexOf("review_id");
@@ -254,7 +267,7 @@ function importReviewData(rawItems, spreadsheetIdOverride) {
         const pId = String(row[colProduct] || "").trim();
         const rId = String(row[colReviewId] || "").trim();
         if (sDom && pId && rId) {
-          existingKeys.add(`${sDom}_${pId}_${rId}`);
+          existingKeys.add(makeReviewDedupKey(sDom, pId, rId));
         }
       }
     }
@@ -289,7 +302,7 @@ function importReviewData(rawItems, spreadsheetIdOverride) {
         continue;
       }
 
-      const key = `${sourceDomain}_${productId}_${reviewId}`;
+      const key = makeReviewDedupKey(sourceDomain, productId, reviewId);
       if (existingKeys.has(key) || batchKeys.has(key)) {
         skippedDuplicateCount++;
         continue;
