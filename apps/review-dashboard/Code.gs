@@ -18,12 +18,159 @@ function include(filename) {
 }
 
 /**
+ * 서버 측 요청 자격증명(Identity) 정보 수집 및 객체화
+ * ActiveUser, EffectiveUser, TemporaryActiveUserKey 정보를 비구조화하여 통합 반환.
+ * ActiveUser 이메일이 존재하면 stableIdentity로 확정하고, 없으면 빈값("")을 유지한다.
+ * EffectiveUser나 TemporaryActiveUserKey를 방문자의 stableIdentity로 대체하지 않는다.
+ *
+ * @return {Object} { activeEmail: string, effectiveEmail: string, temporaryUserKey: string, identityType: string, stableIdentity: string, authenticated: boolean }
+ */
+function resolveRequestIdentity() {
+  let activeEmail = "";
+  try {
+    const user = Session.getActiveUser();
+    if (user && typeof user.getEmail === "function") {
+      activeEmail = String(user.getEmail() || "").trim().toLowerCase();
+    }
+  } catch (err) {
+    activeEmail = "";
+  }
+
+  let effectiveEmail = "";
+  try {
+    const eff = Session.getEffectiveUser();
+    if (eff && typeof eff.getEmail === "function") {
+      effectiveEmail = String(eff.getEmail() || "").trim().toLowerCase();
+    }
+  } catch (err) {
+    effectiveEmail = "";
+  }
+
+  let temporaryUserKey = "";
+  try {
+    if (typeof Session.getTemporaryActiveUserKey === "function") {
+      temporaryUserKey = String(Session.getTemporaryActiveUserKey() || "").trim();
+    }
+  } catch (err) {
+    temporaryUserKey = "";
+  }
+
+  const stableIdentity = activeEmail; // Non-empty activeEmail ONLY
+  const authenticated = stableIdentity !== "";
+  const identityType = activeEmail !== "" ? "active_user" : (temporaryUserKey !== "" ? "anonymous_session" : "unknown");
+
+  return {
+    activeEmail: activeEmail,
+    effectiveEmail: effectiveEmail,
+    temporaryUserKey: temporaryUserKey,
+    identityType: identityType,
+    stableIdentity: stableIdentity,
+    authenticated: authenticated
+  };
+}
+
+/**
+ * 리뷰 Dashboard Read 요청 권한 검증 (확장 가능한 구조 설계)
+ *
+ * @param {Object} [identity]
+ * @return {Object} { allowed: boolean, reason: string }
+ */
+function authorizeDashboardRead(identity) {
+  const reqIdentity = identity || resolveRequestIdentity();
+  return {
+    allowed: true,
+    reason: "Read authorized"
+  };
+}
+
+/**
+ * 리뷰 Import (Write) 요청 서버 측 권한 검증
+ * Fail-Closed 원칙:
+ * 1. allowlist Property("REVIEW_DASHBOARD_ALLOWED_USERS")가 명시되어 있으면, stableIdentity가 목록에 있을 때만 ALLOW.
+ * 2. allowlist Property가 없거나 비어있는 경우 (Current Operator Bootstrap Mode):
+ *    - stableIdentity가 비어있으면 WRITE = DENY. (TemporaryActiveUserKey 단독으로는 절대 WRITE = ALLOW 불가)
+ *    - stableIdentity가 존재하고 effectiveEmail(운영자/배포자)과 일치하거나 단일 운영자 호환 조건 충족 시 ALLOW.
+ *    - 그 외 식별 불가능하거나 불일치 시 WRITE = DENY.
+ *
+ * @param {Object} [identity]
+ * @return {Object} { allowed: boolean, reason: string }
+ */
+function authorizeReviewImport(identity) {
+  const reqIdentity = identity || resolveRequestIdentity();
+
+  let rawAllowedProp = "";
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (props && typeof props.getProperty === "function") {
+      rawAllowedProp = props.getProperty("REVIEW_DASHBOARD_ALLOWED_USERS") || "";
+    }
+  } catch (err) {
+    rawAllowedProp = "";
+  }
+
+  const allowedListStr = String(rawAllowedProp).trim();
+
+  // Case 1: Allowlist Property가 명시적으로 존재함
+  if (allowedListStr.length > 0) {
+    if (!reqIdentity.stableIdentity) {
+      return {
+        allowed: false,
+        reason: "인증된 사용자 이메일 식별 정보가 없어 리뷰 데이터 반영 권한이 거부되었습니다."
+      };
+    }
+
+    const allowedEmails = allowedListStr.split(",").map(e => e.trim().toLowerCase()).filter(e => e.length > 0);
+    const isAllowed = allowedEmails.indexOf(reqIdentity.stableIdentity) !== -1;
+
+    if (isAllowed) {
+      return { allowed: true, reason: "Allowlist authorized" };
+    } else {
+      return {
+        allowed: false,
+        reason: `'${reqIdentity.stableIdentity}' 계정은 리뷰 데이터 반영 권한이 없습니다.`
+      };
+    }
+  }
+
+  // Case 2: Allowlist Property가 없는 경우 (Bootstrap Mode)
+  // stableIdentity가 없으면 (익명 / TemporaryActiveUserKey 단독) 무조건 거부
+  if (!reqIdentity.stableIdentity) {
+    return {
+      allowed: false,
+      reason: "사용자 이메일 식별 정보가 없어 리뷰 데이터 반영 권한이 거부되었습니다."
+    };
+  }
+
+  // stableIdentity가 존재하고 allowlist 미설정 시 운영자와 동일하거나 MYSELF 환경일 경우 허용, 다를 경우 FAIL-CLOSED
+  if (reqIdentity.effectiveEmail && reqIdentity.stableIdentity !== reqIdentity.effectiveEmail) {
+    return {
+      allowed: false,
+      reason: "멀티 유저 권한 목록이 설정되지 않아 데이터 반영 권한이 거부되었습니다."
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: "Single operator bootstrap authorized"
+  };
+}
+
+/**
  * Google Sheet 01_REVIEW_RAW 데이터 조회 및 Object 변환
  *
  * @param {string} [spreadsheetIdOverride]
  * @return {object} { status: "success"|"error", data: Array, count: number, fetchedAt: string }
  */
 function getReviewDashboardData(spreadsheetIdOverride) {
+  const identity = resolveRequestIdentity();
+  const authResult = authorizeDashboardRead(identity);
+  if (!authResult.allowed) {
+    return {
+      status: "error",
+      message: authResult.reason || "조회 권한이 없습니다."
+    };
+  }
+
   try {
     const targetSpreadsheetId = spreadsheetIdOverride || DEFAULT_SPREADSHEET_ID;
     const ss = SpreadsheetApp.openById(targetSpreadsheetId);
@@ -228,6 +375,15 @@ function sanitizeFormula(val) {
  * @return {Object} { status: "success"|"error", received: number, inserted: number, skipped_duplicate: number, invalid: number, fetchedAt: string }
  */
 function importReviewData(rawItems, spreadsheetIdOverride, importFilename) {
+  const identity = resolveRequestIdentity();
+  const authResult = authorizeReviewImport(identity);
+  if (!authResult.allowed) {
+    return {
+      status: "error",
+      message: authResult.reason || "리뷰 반영 권한이 없습니다."
+    };
+  }
+
   const lock = LockService.getScriptLock();
   // 동시 접근 시 최대 10초 대기
   const acquired = lock.tryLock(10000);
@@ -285,7 +441,7 @@ function importReviewData(rawItems, spreadsheetIdOverride, importFilename) {
     // Server-authoritative batch metadata generation
     const serverBatchId = Utilities.getUuid();
     const serverImportedAt = new Date().toISOString();
-    const serverImportedBy = "";
+    const serverImportedBy = sanitizeFormula(identity.stableIdentity || "");
     const cleanImportFilename = sanitizeFormula(importFilename || "");
 
     // 기존 01_REVIEW_RAW의 Dedup Key (source_domain + product_id + review_id) Set 구성 (Collision-safe)

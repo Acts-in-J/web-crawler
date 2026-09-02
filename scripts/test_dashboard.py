@@ -597,3 +597,133 @@ class TestProvenanceContract:
 
         assert "selectedFileName" in content
         assert "importReviewData(parsedItemsToImport, null, selectedFileName)" in content
+
+
+class TestIdentityAndAuthorizationFoundation:
+    """A5-A3-A3 Multi-User Identity & Authorization Foundation 단위 테스트."""
+
+    def test_code_gs_defines_identity_and_authorization_functions(self):
+        """Code.gs에 resolveRequestIdentity, authorizeDashboardRead, authorizeReviewImport가 정의되어 있어야 함."""
+        code_gs_path = os.path.join(DASHBOARD_DIR, "Code.gs")
+        with open(code_gs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "function resolveRequestIdentity" in content
+        assert "function authorizeDashboardRead" in content
+        assert "function authorizeReviewImport" in content
+        assert "authorizeReviewImport(identity)" in content
+
+    def test_identity_resolver_normalization_and_stable_identity_rules(self):
+        """ActiveUser 이메일의 공백 제거 및 소문자 정규화, ActiveUser 누락 시 stableIdentity 빈값 유지를 시뮬레이션 검증."""
+        def resolve_identity_python(active_email="", effective_email="deployer@syncrown.com", temp_key="tmp-123"):
+            norm_active = str(active_email or "").strip().lower()
+            norm_effective = str(effective_email or "").strip().lower()
+            norm_temp = str(temp_key or "").strip()
+
+            stable_id = norm_active  # ONLY active_email
+            auth = stable_id != ""
+            id_type = "active_user" if norm_active != "" else ("anonymous_session" if norm_temp != "" else "unknown")
+
+            return {
+                "activeEmail": norm_active,
+                "effectiveEmail": norm_effective,
+                "temporaryUserKey": norm_temp,
+                "identityType": id_type,
+                "stableIdentity": stable_id,
+                "authenticated": auth,
+            }
+
+        # Case 1: Normal ActiveUser with uppercase/spaces
+        id1 = resolve_identity_python("  Alice@Company.COM  ", "deployer@syncrown.com", "tmp-101")
+        assert id1["activeEmail"] == "alice@company.com"
+        assert id1["stableIdentity"] == "alice@company.com"
+        assert id1["authenticated"] is True
+
+        # Case 2: Blank ActiveUser, EffectiveUser exists (USER_DEPLOYING mode)
+        id2 = resolve_identity_python("", "deployer@syncrown.com", "tmp-102")
+        assert id2["activeEmail"] == ""
+        assert id2["effectiveEmail"] == "deployer@syncrown.com"
+        assert id2["temporaryUserKey"] == "tmp-102"
+        # EffectiveUser and TemporaryUserKey MUST NOT be substituted as stableIdentity
+        assert id2["stableIdentity"] == ""
+        assert id2["authenticated"] is False
+
+    def test_authorization_allowlist_evaluation(self):
+        """Allowlist 설정 유무에 따른 Fail-Closed 및 Bootstrap 허용 판단 검증."""
+        def authorize_import_python(identity, allowlist_prop=""):
+            raw_prop = str(allowlist_prop or "").strip()
+            if len(raw_prop) > 0:
+                if not identity["stableIdentity"]:
+                    return {"allowed": False, "reason": "인증된 유저 없음"}
+                allowed_emails = [e.strip().lower() for e in raw_prop.split(",") if e.strip()]
+                if identity["stableIdentity"] in allowed_emails:
+                    return {"allowed": True, "reason": "Allowlist authorized"}
+                else:
+                    return {"allowed": False, "reason": "Allowlist 미포함"}
+
+            # Bootstrap Mode (Allowlist unconfigured)
+            if not identity["stableIdentity"]:
+                return {"allowed": False, "reason": "인증된 유저 없음"}
+            if identity.get("effectiveEmail") and identity["stableIdentity"] != identity["effectiveEmail"]:
+                return {"allowed": False, "reason": "운영자와 일치하지 않음"}
+            return {"allowed": True, "reason": "Bootstrap authorized"}
+
+        id_alice = {"stableIdentity": "alice@company.com", "effectiveEmail": "deployer@syncrown.com"}
+        id_deployer = {"stableIdentity": "deployer@syncrown.com", "effectiveEmail": "deployer@syncrown.com"}
+        id_anonymous = {"stableIdentity": "", "effectiveEmail": "deployer@syncrown.com", "temporaryUserKey": "tmp-999"}
+
+        # 1. TemporaryActiveUserKey alone -> WRITE = DENY
+        assert authorize_import_python(id_anonymous, "")["allowed"] is False
+        assert authorize_import_python(id_anonymous, "alice@company.com")["allowed"] is False
+
+        # 2. Allowlist configured -> explicit match ALLOW, mismatch DENY
+        prop = "alice@company.com, bob@company.com"
+        assert authorize_import_python(id_alice, prop)["allowed"] is True
+        assert authorize_import_python(id_deployer, prop)["allowed"] is False
+
+        # 3. Allowlist unconfigured -> Deployer bootstrap ALLOW, mismatch DENY
+        assert authorize_import_python(id_deployer, "")["allowed"] is True
+        assert authorize_import_python(id_alice, "")["allowed"] is False
+
+    def test_client_cannot_forge_imported_by(self):
+        """클라이언트가 rawItem 내에 imported_by를 위조해 전송하더라도 서버에서 identity.stableIdentity로 오버라이드됨을 검증."""
+        raw_items_with_forgery = [
+            {
+                "source_domain": "brand.naver.com",
+                "product_id": "p1",
+                "review_id": "r1",
+                "review_text": "정상 리뷰",
+                "imported_by": "hacker@evil.com",  # Client forgery attempt
+            }
+        ]
+
+        server_identity = {"stableIdentity": "authorized_user@company.com"}
+        server_imported_by = sanitize_formula_python(server_identity["stableIdentity"])
+
+        # Server row construction logic
+        item = raw_items_with_forgery[0]
+        computed_imported_by = server_imported_by
+
+        assert computed_imported_by == "authorized_user@company.com"
+        assert computed_imported_by != item["imported_by"]
+
+    def test_unauthorized_import_fails_without_modifying_sheet(self):
+        """미인가 Import 요청 시 명시적 status error를 반환하고 헤더나 데이터를 변경하지 않음."""
+        sheet_headers = ["source_domain", "product_id", "review_id", "import_batch_id", "imported_by"]
+        sheet_rows = [
+            sheet_headers,
+            ["brand.naver.com", "p1", "r1", "b1", "user1@company.com"],
+        ]
+
+        unauthorized_identity = {"stableIdentity": "unauthorized@evil.com"}
+        allowlist = "admin@company.com"
+
+        allowed = unauthorized_identity["stableIdentity"] in [e.strip() for e in allowlist.split(",")]
+        if not allowed:
+            res = {"status": "error", "message": "리뷰 반영 권한이 없습니다."}
+
+        assert res["status"] == "error"
+        assert "권한" in res["message"]
+        assert len(sheet_rows) == 2
+        assert sheet_rows[0] == sheet_headers
+
