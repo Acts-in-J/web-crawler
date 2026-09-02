@@ -58,3 +58,54 @@
 * **Server-Controlled Target**: Browser-facing public functions (`getReviewDashboardData()` and `importReviewData(rawItems, importFilename)`) do **NOT** accept arbitrary `spreadsheetIdOverride` parameters. Target selection is strictly controlled on the server via `DEFAULT_SPREADSHEET_ID`.
 * **Private Server Helpers**: Internal implementations (`getReviewDashboardData_` and `importReviewData_`) use the `_` suffix convention in Apps Script to prevent client invocation via `google.script.run`.
 * **Production Deployment**: Production Version 3 remains unchanged. Production deployment settings remain `executeAs: USER_DEPLOYING` and `access: MYSELF`.
+
+---
+
+## Multi-User Concurrency & Runtime Access Verification Model (A5-A3-A4)
+
+### 1. Deterministic Runtime Identity & Authorization Matrix
+
+| Case | ActiveUser Email | EffectiveUser Email | Allowlist State | Expected Authorization | Reason / Policy Rule |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **A** | Available (`userA@co.com`) | Available | `userA@co.com` included | `WRITE = ALLOW` | User explicitly allowlisted |
+| **B** | Available (`userC@co.com`) | Available | `userA@co.com` (not userC) | `WRITE = DENY` | User absent from allowlist |
+| **C** | Empty (`""`) | Available | Any | `WRITE = DENY` | No stable identity (TempKey ignored) |
+| **D** | Empty (`""`) | Empty (`""`) | Any | `WRITE = DENY` | Unauthenticated session |
+| **E** | Available (`userA@co.com`) | Available | Missing (Unconfigured) | `WRITE = DENY` | Fail-closed: allowlist property missing |
+| **F** | Available (`userA@co.com`) | Available | Blank (`""`) | `WRITE = DENY` | Fail-closed: allowlist property blank |
+| **G** | Available (`userA@co.com`) | Available | Exception / Property error | `WRITE = DENY` | Fail-closed: ScriptProperty read failure |
+| **H** | ActiveUser == EffectiveUser | Same | Missing / Unconfigured | `WRITE = DENY` | Deployer bootstrap removed; allowlist required |
+
+### 2. Multi-User Concurrency Scenarios
+
+* **Scenario 1: Concurrent Non-Overlapping Imports (User A & User B)**
+  * *Execution*: Executed sequentially via `LockService.getScriptLock().tryLock(10000)`.
+  * *Verification*: Both batches complete cleanly. `import_batch_id` is unique per batch UUID. `imported_by` accurately reflects User A for Batch A rows and User B for Batch B rows. `imported_at` records server execution timestamps.
+* **Scenario 2: Concurrent Overlapping Imports (User A & User B)**
+  * *Execution*: LockService sequences the requests. User A inserts Batch A. User B's execution re-reads updated sheet data, computes existing collision-safe dedup keys (`makeReviewDedupKey`), skips duplicate reviews, and appends only new unique reviews.
+  * *Verification*: Zero duplicate rows inserted. Dedup is strictly deterministic across concurrent executions.
+* **Scenario 3: Concurrent Authorized & Unauthorized Requests**
+  * *Execution*: Unauthorized request calls `authorizeReviewImport()` BEFORE `LockService.getScriptLock()`. Immediately fails closed with error status. Does not acquire lock, open sheet, or mutate data.
+  * *Verification*: Authorized request proceeds unaffected. Unauthorized request causes 0 side effects.
+* **Scenario 4: Concurrent Dashboard Read/Preview during Active Import**
+  * *Execution*: Read requests (`getReviewDashboardData_`) operate independently of the script write lock.
+  * *Verification*: Dashboard read remains accessible and consistent; client preview modal is non-writing and unaffected by concurrent server lock holding.
+
+### 3. LockService & Security Boundary Inspection Findings
+* **Authorization Before Lock**: `authorizeReviewImport(identity)` is evaluated BEFORE `LockService.getScriptLock()`. Unauthorized requests are rejected fast without lock acquisition overhead.
+* **Lock Scope**: The script lock covers sheet reading, header migration, collision-safe key set construction, and batch row appending.
+* **Lock Timeout**: 10,000 ms (10 seconds) timeout.
+* **Spreadsheet Control**: Public entry points (`getReviewDashboardData`, `importReviewData`) take no `spreadsheetIdOverride` from the browser, enforcing server-controlled canonical targets.
+
+### 4. Temp Runtime Verification Procedure (Pre-Production Rollout Gate)
+Before any future Production deployment access change, the following verification steps MUST be performed on the Temp Runtime Deployment (`AKfycbwjc6dQiTLCUeV-ZHALQvQHWSgZrw0wwZjnK7CeltrRIZqkOZyxk1D3HzpeBtwwOdLs`):
+
+1. **Setup ScriptProperty**: Configure `REVIEW_DASHBOARD_ALLOWED_USERS` on the Temp Apps Script project with test user emails (e.g. `operatorA@domain.com, operatorB@domain.com`).
+2. **Session Isolation**: Open Operator A in Chrome Profile 1, Operator B in Chrome Profile 2 (or Incognito), and Operator C in an unauthenticated / non-allowlisted session.
+3. **Execute Concurrent Upload Test**: Trigger simultaneous imports from Operator A and Operator B.
+4. **Verify Provenance Attributes**: Confirm in `01_REVIEW_RAW` sheet that `imported_by` matches Operator A for A's rows, Operator B for B's rows, `import_batch_id` values are distinct UUIDs, and `imported_at` timestamps are valid.
+5. **Verify Fail-Closed Block**: Confirm Operator C receives an explicit UI error notification and 0 rows are appended.
+6. **Cleanup**: Delete test rows appended during runtime verification to restore pristine state.
+
+### 5. Production Promotion Gate
+Production access (`executeAs: USER_DEPLOYING`, `access: MYSELF`, Version 3) MUST NOT be modified during this Slice. Any future reconsideration requires complete PASS of the Temp Runtime Verification procedure.

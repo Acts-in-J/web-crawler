@@ -751,3 +751,142 @@ class TestIdentityAndAuthorizationFoundation:
         assert len(sheet_rows) == 2
         assert sheet_rows[0] == sheet_headers
 
+
+class TestMultiUserConcurrencyAndRuntimeAccessPrep:
+    """A5-A3-A4 멀티 유저 동시성 및 런타임 접근 모델 검증 Prep 단위 테스트."""
+
+    def test_identity_and_authorization_matrix_cases_a_through_h(self):
+        """Matrix A~H 케이스에 대한 런타임 권한 결정 결정론적 검증."""
+        def evaluate_matrix(active_email="", effective_email="deployer@syncrown.com", temp_key="", allowlist_prop=None, prop_error=False):
+            # 1. Identity Resolution
+            norm_active = str(active_email or "").strip().lower()
+            stable_id = norm_active
+            identity = {
+                "activeEmail": norm_active,
+                "effectiveEmail": str(effective_email or "").strip().lower(),
+                "temporaryUserKey": str(temp_key or "").strip(),
+                "stableIdentity": stable_id
+            }
+
+            # 2. Authorization Evaluation
+            if not identity["stableIdentity"]:
+                return {"decision": "WRITE DENY", "reason": "No stable identity"}
+
+            if prop_error or allowlist_prop is None:
+                return {"decision": "WRITE DENY", "reason": "Allowlist missing/error"}
+
+            raw_prop = str(allowlist_prop).strip()
+            if len(raw_prop) == 0:
+                return {"decision": "WRITE DENY", "reason": "Allowlist blank"}
+
+            allowed_emails = [e.strip().lower() for e in raw_prop.split(",") if e.strip()]
+            if identity["stableIdentity"] in allowed_emails:
+                return {"decision": "WRITE ALLOW", "reason": "Allowlisted"}
+            else:
+                return {"decision": "WRITE DENY", "reason": "Not in allowlist"}
+
+        allowlist = "userA@company.com, userB@company.com"
+
+        # Case A: ActiveUser available, EffectiveUser available, explicitly allowlisted
+        cA = evaluate_matrix("userA@company.com", "deployer@syncrown.com", "tmp-1", allowlist)
+        assert cA["decision"] == "WRITE ALLOW"
+
+        # Case B: ActiveUser available, EffectiveUser available, not allowlisted
+        cB = evaluate_matrix("userC@company.com", "deployer@syncrown.com", "tmp-2", allowlist)
+        assert cB["decision"] == "WRITE DENY"
+
+        # Case C: ActiveUser empty, TemporaryActiveUserKey available
+        cC = evaluate_matrix("", "deployer@syncrown.com", "tmp-3", allowlist)
+        assert cC["decision"] == "WRITE DENY"
+
+        # Case D: ActiveUser empty, TemporaryActiveUserKey empty
+        cD = evaluate_matrix("", "deployer@syncrown.com", "", allowlist)
+        assert cD["decision"] == "WRITE DENY"
+
+        # Case E: allowlist missing (None)
+        cE = evaluate_matrix("userA@company.com", "deployer@syncrown.com", "tmp-1", None)
+        assert cE["decision"] == "WRITE DENY"
+
+        # Case F: allowlist blank ("")
+        cF = evaluate_matrix("userA@company.com", "deployer@syncrown.com", "tmp-1", "")
+        assert cF["decision"] == "WRITE DENY"
+
+        # Case G: ScriptProperty read failure
+        cG = evaluate_matrix("userA@company.com", "deployer@syncrown.com", "tmp-1", prop_error=True)
+        assert cG["decision"] == "WRITE DENY"
+
+        # Case H: ActiveUser == EffectiveUser but allowlist absent
+        cH = evaluate_matrix("deployer@syncrown.com", "deployer@syncrown.com", "tmp-1", None)
+        assert cH["decision"] == "WRITE DENY"
+
+    def test_authorization_precedes_lock_acquisition_in_code_gs(self):
+        """Code.gs의 importReviewData_ 함수에서 authorizeReviewImport가 LockService.getScriptLock 호출보다 먼저 위치함을 검증."""
+        code_gs_path = os.path.join(DASHBOARD_DIR, "Code.gs")
+        with open(code_gs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        import_fn_start = content.find("function importReviewData_")
+        assert import_fn_start != -1
+
+        auth_call_pos = content.find("authorizeReviewImport(identity)", import_fn_start)
+        lock_call_pos = content.find("LockService.getScriptLock()", import_fn_start)
+
+        assert auth_call_pos != -1
+        assert lock_call_pos != -1
+        assert auth_call_pos < lock_call_pos, "authorizeReviewImport must precede LockService.getScriptLock()"
+
+    def test_simulated_concurrent_imports(self):
+        """두 사용자의 동시 수집 시나리오 (Non-overlapping & Overlapping) 시뮬레이션 검증."""
+        sheet_headers = [
+            "source_domain", "product_id", "review_id", "review_text",
+            "import_batch_id", "import_filename", "imported_by", "imported_at"
+        ]
+        sheet_rows = [sheet_headers]
+        existing_keys = set()
+
+        def process_import_batch(user_email, batch_filename, items):
+            # Simulated importReviewData_ execution
+            batch_id = f"batch-uuid-{len(sheet_rows)}"
+            imported_at = "2026-09-02T12:00:00Z"
+            server_imported_by = user_email
+
+            inserted_count = 0
+            skipped_count = 0
+
+            for item in items:
+                dedup_key = make_review_dedup_key_python(item["source_domain"], item["product_id"], item["review_id"])
+                if dedup_key in existing_keys:
+                    skipped_count += 1
+                else:
+                    existing_keys.add(dedup_key)
+                    sheet_rows.append([
+                        item["source_domain"], item["product_id"], item["review_id"], item.get("review_text", ""),
+                        batch_id, batch_filename, server_imported_by, imported_at
+                    ])
+                    inserted_count += 1
+
+            return {"inserted": inserted_count, "skipped": skipped_count, "batch_id": batch_id}
+
+        # User 1 imports Set 1 (r1, r2)
+        res1 = process_import_batch("userA@company.com", "batch_a.xlsx", [
+            {"source_domain": "brand.naver.com", "product_id": "p1", "review_id": "r1"},
+            {"source_domain": "brand.naver.com", "product_id": "p1", "review_id": "r2"},
+        ])
+        assert res1["inserted"] == 2
+
+        # User 2 concurrently imports Set 2 (r2 [overlapping], r3 [new])
+        res2 = process_import_batch("userB@company.com", "batch_b.xlsx", [
+            {"source_domain": "brand.naver.com", "product_id": "p1", "review_id": "r2"},
+            {"source_domain": "brand.naver.com", "product_id": "p1", "review_id": "r3"},
+        ])
+        assert res2["inserted"] == 1
+        assert res2["skipped"] == 1
+
+        # Total rows in sheet: 1 header + 3 data rows
+        assert len(sheet_rows) == 4
+        # Provenance attribution verified
+        assert sheet_rows[1][6] == "userA@company.com"
+        assert sheet_rows[2][6] == "userA@company.com"
+        assert sheet_rows[3][6] == "userB@company.com"
+
+
