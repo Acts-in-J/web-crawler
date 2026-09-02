@@ -889,4 +889,17 @@ class TestMultiUserConcurrencyAndRuntimeAccessPrep:
         assert sheet_rows[2][6] == "userA@company.com"
         assert sheet_rows[3][6] == "userB@company.com"
 
+    def test_readme_defines_candidate_runtime_binding_gate(self):
+        """README.md 문서에 Candidate Runtime Binding Gate 및 10단계 순서 조건이 명시되어 있는지 검증."""
+        readme_path = os.path.join(DASHBOARD_DIR, "README.md")
+        with open(readme_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "Candidate Runtime Binding Gate" in content
+        assert "Candidate Git Commit" in content
+        assert "MUST NOT be assumed to contain A5-A3-A3" in content
+        assert "Candidate Runtime Binding Verification" in content
+        assert "Production Version 3 MUST remain untouched" in content
+
+
 

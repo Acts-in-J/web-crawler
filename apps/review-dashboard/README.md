@@ -61,7 +61,24 @@
 
 ---
 
-## Multi-User Concurrency & Runtime Access Verification Model (A5-A3-A4)
+## Multi-User Concurrency & Runtime Access Verification Model (A5-A3-A4 / FIX1)
+
+### Candidate Runtime Binding Gate (Mandatory Prerequisite)
+Before any multi-user runtime testing begins, the candidate runtime binding MUST be explicitly verified:
+1. **Candidate Git Commit**: Identify the exact candidate Git commit being tested.
+2. **Apps Script Source Binding**: Confirm the Apps Script source code matching that exact candidate commit.
+3. **Target Deployment & Version**: Confirm the exact deployment ID and version serving the candidate code.
+4. **Non-Production Isolation**: Verify that the target candidate deployment is NOT the Production deployment (`AKfycbxtwQefoMI0C_rsOD_F5XPncnuv8Og2epL37zF1OA63bn51UmEBuHF7FhegDhsoRjxQ`).
+5. **Production Safeguard**: Production Deployment remains Version 3 untouched.
+6. **Execution/Access Record**: Record the exact `executeAs` / `access` configuration used for the test deployment.
+7. **Gate Requirement**: Multi-user testing MUST NOT begin until candidate-code ↔ deployment binding is proven. If candidate runtime binding cannot be proven: **STATUS: HOLD**.
+
+*Important Safeguards*:
+* Existing Temp `@3` MUST NOT be assumed to contain A5-A3-A3 authorization code merely because it is labeled as the Temp Runtime Deployment.
+* If Temp `@3` is stale, the next Runtime Slice must prepare a separate candidate runtime deployment/version or another explicitly verified target.
+* Production Version 3 MUST remain untouched.
+* `@HEAD` deployment may only be used if its candidate-code identity and required access/execute-as semantics are explicitly verified first.
+* Do NOT infer runtime identity behavior from deployment labels alone.
 
 ### 1. Deterministic Runtime Identity & Authorization Matrix
 
@@ -98,14 +115,19 @@
 * **Spreadsheet Control**: Public entry points (`getReviewDashboardData`, `importReviewData`) take no `spreadsheetIdOverride` from the browser, enforcing server-controlled canonical targets.
 
 ### 4. Temp Runtime Verification Procedure (Pre-Production Rollout Gate)
-Before any future Production deployment access change, the following verification steps MUST be performed on the Temp Runtime Deployment (`AKfycbwjc6dQiTLCUeV-ZHALQvQHWSgZrw0wwZjnK7CeltrRIZqkOZyxk1D3HzpeBtwwOdLs`):
+Runtime verification MUST follow this exact precondition order:
 
-1. **Setup ScriptProperty**: Configure `REVIEW_DASHBOARD_ALLOWED_USERS` on the Temp Apps Script project with test user emails (e.g. `operatorA@domain.com, operatorB@domain.com`).
-2. **Session Isolation**: Open Operator A in Chrome Profile 1, Operator B in Chrome Profile 2 (or Incognito), and Operator C in an unauthenticated / non-allowlisted session.
-3. **Execute Concurrent Upload Test**: Trigger simultaneous imports from Operator A and Operator B.
-4. **Verify Provenance Attributes**: Confirm in `01_REVIEW_RAW` sheet that `imported_by` matches Operator A for A's rows, Operator B for B's rows, `import_batch_id` values are distinct UUIDs, and `imported_at` timestamps are valid.
-5. **Verify Fail-Closed Block**: Confirm Operator C receives an explicit UI error notification and 0 rows are appended.
-6. **Cleanup**: Delete test rows appended during runtime verification to restore pristine state.
+0. **Candidate Runtime Binding Verification**: Prove candidate Git commit ↔ Apps Script source ↔ candidate deployment binding. If unproven -> **HOLD**.
+1. **Verify Candidate Deployment Access Model**: Verify execute-as / access configuration on candidate deployment.
+2. **Configure Test Allowlist**: Set `REVIEW_DASHBOARD_ALLOWED_USERS` on candidate deployment script properties (e.g., `userA@domain.com, userB@domain.com`).
+3. **Establish Isolated User Sessions**: Open User A in Profile 1, User B in Profile 2/Incognito, and User C in an unauthenticated/unallowlisted session.
+4. **Verify Observed Identity Signals**: Confirm `stableIdentity` resolution for active sessions.
+5. **Execute Non-Overlapping Concurrency Test**: Trigger simultaneous imports from User A and User B with distinct review sets.
+6. **Execute Overlapping Concurrency/Dedup Test**: Trigger simultaneous imports with overlapping review IDs and verify deterministic dedup.
+7. **Verify Unauthorized Concurrent Request Isolation**: Verify User C request receives fast-fail error and appends 0 rows.
+8. **Verify Provenance**: Inspect `01_REVIEW_RAW` to confirm `import_batch_id`, `import_filename`, `imported_by`, and `imported_at`.
+9. **Cleanup Test Rows**: Remove test rows from `01_REVIEW_RAW`.
+10. **Return Evidence**: Output exact PASS/HOLD report with observed evidence.
 
 ### 5. Production Promotion Gate
-Production access (`executeAs: USER_DEPLOYING`, `access: MYSELF`, Version 3) MUST NOT be modified during this Slice. Any future reconsideration requires complete PASS of the Temp Runtime Verification procedure.
+Production access (`executeAs: USER_DEPLOYING`, `access: MYSELF`, Version 3) MUST NOT be modified during this Slice. Any future reconsideration requires complete PASS of the Candidate Runtime Binding Gate and the 10-step Temp Runtime Verification procedure.
