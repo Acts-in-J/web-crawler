@@ -1,7 +1,4 @@
-<script>
-  let allReviews = [];
-  let filteredReviews = [];
-  let displayCount = 50;
+  let parsedItemsToImport = [];
 
   document.addEventListener('DOMContentLoaded', function() {
     initEvents();
@@ -19,6 +16,13 @@
       displayCount += 50;
       renderReviewCards();
     });
+
+    // Import Modal Listeners
+    document.getElementById('btnOpenImportModal').addEventListener('click', openImportModal);
+    document.getElementById('btnCloseImportModal').addEventListener('click', closeImportModal);
+    document.getElementById('btnCancelImport').addEventListener('click', closeImportModal);
+    document.getElementById('xlsxFileInput').addEventListener('change', handleFileSelect);
+    document.getElementById('btnConfirmImport').addEventListener('click', confirmImport);
   }
 
   function fetchDashboardData() {
@@ -398,5 +402,268 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  }
+
+  /* ==========================================================================
+     Excel Import (.xlsx) Client Functions
+     ========================================================================== */
+
+  function openImportModal() {
+    resetImportForm();
+    document.getElementById('importModal').style.display = 'flex';
+  }
+
+  function closeImportModal() {
+    document.getElementById('importModal').style.display = 'none';
+    resetImportForm();
+  }
+
+  function resetImportForm() {
+    document.getElementById('xlsxFileInput').value = '';
+    document.getElementById('selectedFileNameDisplay').textContent = '선택된 파일 없음';
+    document.getElementById('importPreviewContainer').style.display = 'none';
+    document.getElementById('importResultMessage').style.display = 'none';
+    document.getElementById('btnConfirmImport').disabled = true;
+    document.getElementById('btnConfirmImport').textContent = '신규 데이터 반영 (0건)';
+    parsedItemsToImport = [];
+  }
+
+  function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    document.getElementById('selectedFileNameDisplay').textContent = file.name;
+    document.getElementById('importResultMessage').style.display = 'none';
+
+    if (typeof XLSX === 'undefined') {
+      showImportResult('error', 'XLSX 파싱 라이브러리를 로드하지 못했습니다. 네트워크 연결을 확인해 주세요.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+        
+        if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+          showImportResult('error', 'Excel 파일 내에 시트가 존재하지 않습니다.');
+          return;
+        }
+
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const rawRows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+        processParsedRows(file.name, firstSheetName, rawRows);
+      } catch (err) {
+        console.error("Excel File Read Error:", err);
+        showImportResult('error', 'Excel 파일을 읽는 도중 오류가 발생했습니다: ' + (err.message || String(err)));
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function processParsedRows(fileName, sheetName, rawRows) {
+    const requiredHeaders = [
+      "source_domain", "product_id", "product_name", "brand",
+      "review_id", "review_date", "rating", "review_text",
+      "product_option", "helpful_count", "photo_review",
+      "video_review", "collected_at"
+    ];
+
+    document.getElementById('previewFileName').textContent = fileName;
+    document.getElementById('previewSheetName').textContent = sheetName;
+
+    if (rawRows.length === 0) {
+      document.getElementById('importPreviewContainer').style.display = 'block';
+      document.getElementById('statReceivedCount').textContent = '0';
+      document.getElementById('statNewCount').textContent = '0';
+      document.getElementById('statDedupCount').textContent = '0';
+      document.getElementById('statInvalidCount').textContent = '0';
+      document.getElementById('btnConfirmImport').disabled = true;
+      document.getElementById('btnConfirmImport').textContent = '신규 데이터 반영 (0건)';
+      return;
+    }
+
+    const sampleRowKeys = Object.keys(rawRows[0]).map(k => String(k).trim().toLowerCase());
+    const missingHeaders = requiredHeaders.filter(h => sampleRowKeys.indexOf(h) === -1);
+
+    const headerErrorBox = document.getElementById('previewHeaderError');
+    if (missingHeaders.length > 0) {
+      headerErrorBox.style.display = 'block';
+      document.getElementById('missingHeadersText').textContent = missingHeaders.join(', ');
+    } else {
+      headerErrorBox.style.display = 'none';
+    }
+
+    const existingKeySet = new Set();
+    allReviews.forEach(r => {
+      if (r.source_domain && r.product_id && r.review_id) {
+        existingKeySet.add(`${r.source_domain}_${r.product_id}_${r.review_id}`);
+      }
+    });
+
+    const fileBatchKeySet = new Set();
+    let newItems = [];
+    let fileDedupCount = 0;
+    let existingDedupCount = 0;
+    let invalidCount = 0;
+    const invalidReasons = [];
+
+    rawRows.forEach((row, idx) => {
+      const rowNum = idx + 2;
+      const sourceDomain = getRowVal(row, 'source_domain');
+      const productId = getRowVal(row, 'product_id');
+      const reviewId = getRowVal(row, 'review_id');
+
+      if (!sourceDomain || !productId || !reviewId) {
+        invalidCount++;
+        if (invalidReasons.length < 5) {
+          invalidReasons.push(`Row ${rowNum}: 필수 키(source_domain, product_id, review_id) 누락`);
+        }
+        return;
+      }
+
+      const key = `${sourceDomain}_${productId}_${reviewId}`;
+
+      if (existingKeySet.has(key)) {
+        existingDedupCount++;
+        return;
+      }
+
+      if (fileBatchKeySet.has(key)) {
+        fileDedupCount++;
+        return;
+      }
+
+      fileBatchKeySet.add(key);
+
+      const parsedItem = {
+        crawl_id: getRowVal(row, 'crawl_id'),
+        source_domain: sourceDomain,
+        product_id: productId,
+        product_name: getRowVal(row, 'product_name'),
+        brand: getRowVal(row, 'brand'),
+        review_id: reviewId,
+        review_date: getRowVal(row, 'review_date'),
+        rating: parseFloat(getRowVal(row, 'rating')) || 0,
+        review_text: getRowVal(row, 'review_text'),
+        product_option: getRowVal(row, 'product_option'),
+        helpful_count: parseInt(getRowVal(row, 'helpful_count'), 10) || 0,
+        photo_review: parseBoolVal(getRowVal(row, 'photo_review')),
+        video_review: parseBoolVal(getRowVal(row, 'video_review')),
+        collected_at: getRowVal(row, 'collected_at') || new Date().toISOString()
+      };
+
+      newItems.push(parsedItem);
+    });
+
+    parsedItemsToImport = newItems;
+    const totalDedupCount = existingDedupCount + fileDedupCount;
+
+    document.getElementById('statReceivedCount').textContent = rawRows.length.toLocaleString();
+    document.getElementById('statNewCount').textContent = newItems.length.toLocaleString();
+    document.getElementById('statDedupCount').textContent = totalDedupCount.toLocaleString();
+    document.getElementById('statInvalidCount').textContent = invalidCount.toLocaleString();
+
+    const invalidDetailsBox = document.getElementById('previewInvalidDetails');
+    const invalidList = document.getElementById('invalidReasonsList');
+    if (invalidReasons.length > 0) {
+      invalidDetailsBox.style.display = 'block';
+      invalidList.innerHTML = invalidReasons.map(r => `<li>${escapeHtml(r)}</li>`).join('');
+    } else {
+      invalidDetailsBox.style.display = 'none';
+    }
+
+    document.getElementById('importPreviewContainer').style.display = 'block';
+
+    const btnConfirm = document.getElementById('btnConfirmImport');
+    if (missingHeaders.length > 0 || newItems.length === 0) {
+      btnConfirm.disabled = true;
+      btnConfirm.textContent = `신규 데이터 반영 (0건)`;
+    } else {
+      btnConfirm.disabled = false;
+      btnConfirm.textContent = `신규 데이터 반영 (${newItems.length.toLocaleString()}건)`;
+    }
+  }
+
+  function getRowVal(rowObj, targetKey) {
+    if (!rowObj) return '';
+    const keys = Object.keys(rowObj);
+    const matchKey = keys.find(k => String(k).trim().toLowerCase() === targetKey);
+    if (matchKey !== undefined && rowObj[matchKey] !== undefined && rowObj[matchKey] !== null) {
+      const val = rowObj[matchKey];
+      if (val instanceof Date) return val.toISOString();
+      return String(val).trim();
+    }
+    return '';
+  }
+
+  function parseBoolVal(val) {
+    if (typeof val === 'boolean') return val;
+    const str = String(val).trim().toLowerCase();
+    return str === 'true' || str === '1' || str === 'yes' || str === 'y';
+  }
+
+  function confirmImport() {
+    if (parsedItemsToImport.length === 0) return;
+
+    const btnConfirm = document.getElementById('btnConfirmImport');
+    btnConfirm.disabled = true;
+    btnConfirm.textContent = '반영 중...';
+
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(onImportSuccess)
+        .withFailureHandler(onImportError)
+        .importReviewData(parsedItemsToImport);
+    } else {
+      // Mock / Local preview fallback
+      setTimeout(function() {
+        onImportSuccess({
+          status: 'success',
+          received: parsedItemsToImport.length,
+          inserted: parsedItemsToImport.length,
+          skipped_duplicate: 0,
+          invalid: 0
+        });
+      }, 600);
+    }
+  }
+
+  function onImportSuccess(response) {
+    const btnConfirm = document.getElementById('btnConfirmImport');
+    btnConfirm.disabled = true;
+
+    if (!response || response.status === 'error') {
+      onImportError(new Error(response ? response.message : 'Import 중 오류 발생'));
+      return;
+    }
+
+    showImportResult('success', `✅ 성공: 신규 데이터 ${response.inserted}건이 01_REVIEW_RAW에 반영되었습니다. (중복 제외: ${response.skipped_duplicate}건, 오류 제외: ${response.invalid}건)`);
+    
+    // Refresh Dashboard Data
+    fetchDashboardData();
+
+    setTimeout(function() {
+      closeImportModal();
+    }, 2500);
+  }
+
+  function onImportError(error) {
+    const btnConfirm = document.getElementById('btnConfirmImport');
+    btnConfirm.disabled = false;
+    btnConfirm.textContent = `신규 데이터 반영 (${parsedItemsToImport.length}건)`;
+
+    const msg = error && error.message ? error.message : '데이터 반영 중 오류가 발생했습니다.';
+    showImportResult('error', `❌ 오류: ${msg}`);
+  }
+
+  function showImportResult(type, text) {
+    const box = document.getElementById('importResultMessage');
+    box.className = `import-result-box ${type}`;
+    box.textContent = text;
+    box.style.display = 'block';
   }
 </script>

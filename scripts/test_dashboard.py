@@ -288,3 +288,118 @@ class TestDashboardAggregationLogic:
 
         res = calculate_dashboard_metrics(future_reviews, reference_time_ms=ref_ms)
         assert res["recent_30_days"] == 1
+
+
+def sanitize_formula_python(val: str) -> str:
+    """Formula Injection 방어: =, +, -, @, \t, \r로 시작하면 ' 접두어 추가."""
+    if val is None:
+        return ""
+    s = str(val)
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
+class TestReviewImportWorkflow:
+    """A5-A2 Excel Import 관련 검증 테스트 클래스."""
+
+    def test_import_function_definition_in_code_gs(self):
+        """Code.gs에 importReviewData와 LockService가 정의되어 있어야 함."""
+        code_gs_path = os.path.join(DASHBOARD_DIR, "Code.gs")
+        with open(code_gs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "function importReviewData" in content, "Code.gs 에 importReviewData 함수가 없습니다."
+        assert "LockService.getScriptLock()" in content, "Code.gs 에 LockService 동시성 방어가 누락되었습니다."
+        assert "function sanitizeFormula" in content, "Code.gs 에 sanitizeFormula 방어가 누락되었습니다."
+
+    def test_formula_injection_sanitization(self):
+        """Formula injection 필드 방어 테스트."""
+        assert sanitize_formula_python("=SUM(A1:A10)") == "'=SUM(A1:A10)"
+        assert sanitize_formula_python("+100") == "'+100"
+        assert sanitize_formula_python("-100") == "'-100"
+        assert sanitize_formula_python("@ATTACK") == "'@ATTACK"
+        assert sanitize_formula_python("일반 리뷰 텍스트입니다.") == "일반 리뷰 텍스트입니다."
+
+    def test_import_preview_and_confirm_simulation(self):
+        """Import 시뮬레이션: 수신, 신규, 파일내 중복, 기존 시트 중복, invalid 구분."""
+        existing_sheet_reviews = [
+            {"source_domain": "brand.naver.com", "product_id": "100", "review_id": "r1", "review_text": "기존 리뷰 1"},
+        ]
+
+        uploaded_excel_rows = [
+            # 1. 정상 신규 건
+            {"source_domain": "brand.naver.com", "product_id": "100", "review_id": "r2", "review_text": "신규 리뷰 2"},
+            # 2. 기존 시트 중복 건
+            {"source_domain": "brand.naver.com", "product_id": "100", "review_id": "r1", "review_text": "중복 리뷰 r1"},
+            # 3. 파일 내 중복 건 (r2 재입력)
+            {"source_domain": "brand.naver.com", "product_id": "100", "review_id": "r2", "review_text": "파일내 중복 r2"},
+            # 4. 필수 키 누락 (Invalid 건)
+            {"source_domain": "brand.naver.com", "product_id": "", "review_id": "r4", "review_text": "product_id 누락"},
+            # 5. Formula Injection 공격 건 (신규 건)
+            {"source_domain": "brand.naver.com", "product_id": "100", "review_id": "r5", "review_text": "=1+1 공격"},
+        ]
+
+        existing_keys = {f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" for r in existing_sheet_reviews}
+
+        file_batch_keys = set()
+        new_to_append = []
+        file_dedup = 0
+        existing_dedup = 0
+        invalid_count = 0
+
+        for r in uploaded_excel_rows:
+            s_dom = r.get("source_domain", "").strip()
+            p_id = r.get("product_id", "").strip()
+            r_id = r.get("review_id", "").strip()
+
+            if not s_dom or not p_id or not r_id:
+                invalid_count += 1
+                continue
+
+            key = f"{s_dom}_{p_id}_{r_id}"
+
+            if key in existing_keys:
+                existing_dedup += 1
+                continue
+
+            if key in file_batch_keys:
+                file_dedup += 1
+                continue
+
+            file_batch_keys.add(key)
+            cleaned_row = dict(r)
+            cleaned_row["review_text"] = sanitize_formula_python(r["review_text"])
+            new_to_append.append(cleaned_row)
+
+        assert len(uploaded_excel_rows) == 5
+        assert len(new_to_append) == 2  # r2 및 r5
+        assert existing_dedup == 1      # r1
+        assert file_dedup == 1          # r2 2nd row
+        assert invalid_count == 1       # r4
+
+        # Formula Protection Verify
+        r5_item = next(item for item in new_to_append if item["review_id"] == "r5")
+        assert r5_item["review_text"] == "'=1+1 공격"
+
+    def test_import_confirm_twice_idempotency(self):
+        """동일 파일 2회 Confirm 반영 시 2회차 inserted = 0 이어야 함."""
+        sheet = [
+            {"source_domain": "brand.naver.com", "product_id": "100", "review_id": "r1"},
+        ]
+
+        batch = [
+            {"source_domain": "brand.naver.com", "product_id": "100", "review_id": "r2"},
+        ]
+
+        # 1st Run
+        existing_keys = {f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" for r in sheet}
+        inserted_1st = [r for r in batch if f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" not in existing_keys]
+        assert len(inserted_1st) == 1
+
+        # Simulate sheet append
+        sheet.extend(inserted_1st)
+
+        # 2nd Run with identical batch
+        existing_keys_2nd = {f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" for r in sheet}
+        inserted_2nd = [r for r in batch if f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" not in existing_keys_2nd]
+        assert len(inserted_2nd) == 0

@@ -168,3 +168,191 @@ function getReviewDashboardData(spreadsheetIdOverride) {
     };
   }
 }
+
+/**
+ * Formula Injection 방어:
+ * 텍스트가 =, +, -, @, \t, \r 등으로 시작할 경우 Google Sheets 수식 실행 방지를 위해 ' 접두어 추가
+ */
+function sanitizeFormula(val) {
+  if (val === null || val === undefined) return "";
+  const str = String(val);
+  if (/^[=\+\-@\t\r]/.test(str)) {
+    return "'" + str;
+  }
+  return str;
+}
+
+/**
+ * 엑셀 Import 데이터 수신, LockService 동시성 보호, 서버 측 검증, 중복 제거 및 Append Only 처리
+ *
+ * @param {Array<Object>} rawItems Client에서 파싱된 JSON 리뷰 데이터 배열
+ * @param {string} [spreadsheetIdOverride]
+ * @return {Object} { status: "success"|"error", received: number, inserted: number, skipped_duplicate: number, invalid: number, fetchedAt: string }
+ */
+function importReviewData(rawItems, spreadsheetIdOverride) {
+  const lock = LockService.getScriptLock();
+  // 동시 접근 시 최대 10초 대기
+  const acquired = lock.tryLock(10000);
+  if (!acquired) {
+    return {
+      status: "error",
+      message: "다른 담당자가 데이터를 반영 중입니다. 잠시 후 다시 시도해 주세요."
+    };
+  }
+
+  try {
+    if (!rawItems || !Array.isArray(rawItems)) {
+      return {
+        status: "error",
+        message: "반영할 데이터가 올바르지 않습니다."
+      };
+    }
+
+    const targetSpreadsheetId = spreadsheetIdOverride || DEFAULT_SPREADSHEET_ID;
+    const ss = SpreadsheetApp.openById(targetSpreadsheetId);
+    if (!ss) {
+      return { status: "error", message: "Spreadsheet를 찾을 수 없습니다." };
+    }
+
+    const sheet = ss.getSheetByName(DEFAULT_SHEET_NAME);
+    if (!sheet) {
+      return { status: "error", message: `'${DEFAULT_SHEET_NAME}' 시트를 찾을 수 없습니다.` };
+    }
+
+    const data = sheet.getDataRange().getValues();
+    if (!data || data.length === 0) {
+      return { status: "error", message: "시트 헤더를 읽을 수 없습니다." };
+    }
+
+    const headers = data[0].map(h => String(h).trim().toLowerCase());
+
+    const requiredHeaders = [
+      "source_domain", "product_id", "product_name", "brand",
+      "review_id", "review_date", "rating", "review_text",
+      "product_option", "helpful_count", "photo_review",
+      "video_review", "collected_at"
+    ];
+
+    const missingHeaders = requiredHeaders.filter(h => headers.indexOf(h) === -1);
+    if (missingHeaders.length > 0) {
+      return {
+        status: "error",
+        message: "리뷰 데이터 형식이 올바르지 않습니다. 필요한 컬럼을 확인해 주세요."
+      };
+    }
+
+    // 기존 01_REVIEW_RAW의 Dedup Key (source_domain + product_id + review_id) Set 구성
+    const colSource = headers.indexOf("source_domain");
+    const colProduct = headers.indexOf("product_id");
+    const colReviewId = headers.indexOf("review_id");
+
+    const existingKeys = new Set();
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      if (row && row.length > Math.max(colSource, colProduct, colReviewId)) {
+        const sDom = String(row[colSource] || "").trim();
+        const pId = String(row[colProduct] || "").trim();
+        const rId = String(row[colReviewId] || "").trim();
+        if (sDom && pId && rId) {
+          existingKeys.add(`${sDom}_${pId}_${rId}`);
+        }
+      }
+    }
+
+    let insertedCount = 0;
+    let skippedDuplicateCount = 0;
+    let invalidCount = 0;
+
+    const rowsToAppend = [];
+    const batchKeys = new Set();
+
+    const parseBool = (val) => {
+      if (typeof val === "boolean") return val;
+      const str = String(val).trim().toLowerCase();
+      return str === "true" || str === "1" || str === "yes" || str === "y";
+    };
+
+    for (let i = 0; i < rawItems.length; i++) {
+      const item = rawItems[i];
+      if (!item || typeof item !== "object") {
+        invalidCount++;
+        continue;
+      }
+
+      const sourceDomain = String(item.source_domain || "").trim();
+      const productId = String(item.product_id || "").trim();
+      const reviewId = String(item.review_id || "").trim();
+
+      // Row Validation: 필수 수집 키 누락 시 invalid
+      if (!sourceDomain || !productId || !reviewId) {
+        invalidCount++;
+        continue;
+      }
+
+      const key = `${sourceDomain}_${productId}_${reviewId}`;
+      if (existingKeys.has(key) || batchKeys.has(key)) {
+        skippedDuplicateCount++;
+        continue;
+      }
+
+      batchKeys.add(key);
+
+      // Sheet Header 순서에 맞춰 Data row 구성 및 Formula injection 방어
+      const row = headers.map(header => {
+        if (header === "crawl_id") return sanitizeFormula(item.crawl_id || "");
+        if (header === "source_domain") return sanitizeFormula(sourceDomain);
+        if (header === "product_id") return sanitizeFormula(productId);
+        if (header === "product_name") return sanitizeFormula(item.product_name || "");
+        if (header === "brand") return sanitizeFormula(item.brand || "");
+        if (header === "review_id") return sanitizeFormula(reviewId);
+        if (header === "review_date") {
+          const val = item.review_date;
+          if (val instanceof Date) return val.toISOString();
+          return sanitizeFormula(val || "");
+        }
+        if (header === "rating") {
+          const r = parseFloat(item.rating);
+          return isNaN(r) ? 0 : r;
+        }
+        if (header === "review_text") return sanitizeFormula(item.review_text || "");
+        if (header === "product_option") return sanitizeFormula(item.product_option || "");
+        if (header === "helpful_count") {
+          const h = parseInt(item.helpful_count, 10);
+          return isNaN(h) ? 0 : h;
+        }
+        if (header === "photo_review") return parseBool(item.photo_review);
+        if (header === "video_review") return parseBool(item.video_review);
+        if (header === "collected_at") {
+          const val = item.collected_at;
+          if (val instanceof Date) return val.toISOString();
+          return sanitizeFormula(val || new Date().toISOString());
+        }
+        return sanitizeFormula(item[header] || "");
+      });
+
+      rowsToAppend.push(row);
+      insertedCount++;
+    }
+
+    if (rowsToAppend.length > 0) {
+      const lastRow = sheet.getLastRow();
+      sheet.getRange(lastRow + 1, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
+    }
+
+    return {
+      status: "success",
+      received: rawItems.length,
+      inserted: insertedCount,
+      skipped_duplicate: skippedDuplicateCount,
+      invalid: invalidCount,
+      fetchedAt: new Date().toISOString()
+    };
+  } catch (err) {
+    return {
+      status: "error",
+      message: "데이터 반영 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
