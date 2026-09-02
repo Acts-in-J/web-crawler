@@ -74,6 +74,34 @@ class TestDashboardFileContracts:
         for header in required_headers:
             assert header in content, f"Code.gs 에 필수 헤더 '{header}' 검증이 누락되었습니다."
 
+    def test_scripts_html_script_tag_wrapper_and_state_contracts(self):
+        """Scripts.html이 <script>로 시작하고 </script>로 끝나며 필수 전역 변수 4개가 선언되어야 함."""
+        scripts_path = os.path.join(DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            raw_content = f.read()
+
+        stripped = raw_content.strip()
+        assert stripped.startswith("<script>"), "Scripts.html 시작 부분에 <script> 태그가 없습니다."
+        assert stripped.endswith("</script>"), "Scripts.html 마지막 부분에 </script> 태그가 없습니다."
+
+        # Verify global state declarations
+        required_states = [
+            "let allReviews = []",
+            "let filteredReviews = []",
+            "let displayCount = 50",
+            "let parsedItemsToImport = []",
+        ]
+        for state_decl in required_states:
+            assert state_decl in stripped, f"Scripts.html 에 필수 전역 변수 선언 '{state_decl}' 이 누락되었습니다."
+
+    def test_index_html_includes_scripts(self):
+        """Index.html에 <?!= include('Scripts'); ?> 구문이 정상 포함되어야 함."""
+        index_path = os.path.join(DASHBOARD_DIR, "Index.html")
+        with open(index_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "<?!= include('Scripts'); ?>" in content, "Index.html 에 Scripts include 구문이 없습니다."
+
 
 # ---------------------------------------------------------------------------
 # 멀티 프로덕트 데이터 집계 Pure Python Reference Engine (테스트용)
@@ -403,3 +431,15 @@ class TestReviewImportWorkflow:
         existing_keys_2nd = {f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" for r in sheet}
         inserted_2nd = [r for r in batch if f"{r['source_domain']}_{r['product_id']}_{r['review_id']}" not in existing_keys_2nd]
         assert len(inserted_2nd) == 0
+
+    def test_code_gs_server_side_commit_time_validation(self):
+        """Code.gs의 importReviewData()가 서버 단에서 객체/필수키/중복을 재검증하는지 확인."""
+        code_gs_path = os.path.join(DASHBOARD_DIR, "Code.gs")
+        with open(code_gs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "Array.isArray(rawItems)" in content, "Code.gs 서버 검증에 rawItems 배열 타입 검사가 누락되었습니다."
+        assert "typeof item !== \"object\"" in content or "typeof item !== 'object'" in content, "Code.gs 서버 검증에 row 객체 타입 검사가 누락되었습니다."
+        assert "sourceDomain" in content and "productId" in content and "reviewId" in content, "Code.gs 서버 검증에 필수 키 추출 검사가 누락되었습니다."
+        assert "!sourceDomain || !productId || !reviewId" in content, "Code.gs 서버 검증에 필수 키 빈값 방어가 누락되었습니다."
+        assert "existingKeys.has(key)" in content, "Code.gs 서버 검증에 시트 기존 키 재조회 중복검증이 누락되었습니다."
