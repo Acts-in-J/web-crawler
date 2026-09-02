@@ -94,7 +94,11 @@ function getReviewDashboardData(spreadsheetIdOverride) {
       helpful_count: headers.indexOf("helpful_count"),
       photo_review: headers.indexOf("photo_review"),
       video_review: headers.indexOf("video_review"),
-      collected_at: headers.indexOf("collected_at")
+      collected_at: headers.indexOf("collected_at"),
+      import_batch_id: headers.indexOf("import_batch_id"),
+      import_filename: headers.indexOf("import_filename"),
+      imported_by: headers.indexOf("imported_by"),
+      imported_at: headers.indexOf("imported_at")
     };
 
     const reviews = [];
@@ -151,7 +155,11 @@ function getReviewDashboardData(spreadsheetIdOverride) {
         helpful_count: helpfulCount,
         photo_review: parseBool(getValue("photo_review", false)),
         video_review: parseBool(getValue("video_review", false)),
-        collected_at: collectedAtStr
+        collected_at: collectedAtStr,
+        import_batch_id: String(getValue("import_batch_id", "")),
+        import_filename: String(getValue("import_filename", "")),
+        imported_by: String(getValue("imported_by", "")),
+        imported_at: String(getValue("imported_at", ""))
       });
     }
 
@@ -167,6 +175,22 @@ function getReviewDashboardData(spreadsheetIdOverride) {
       message: "리뷰 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
     };
   }
+}
+
+/**
+ * 01_REVIEW_RAW 시트 헤더에 선택적 Provenance 컬럼(import_batch_id, import_filename, imported_by, imported_at)이
+ * 없으면 순서대로 기존 헤더 끝에 추가하는 Idempotent Helper.
+ * 기존 헤더를 재배포하거나 삭제하거나 순서를 바꾸지 않는다.
+ */
+function ensureProvenanceHeaders(sheet, currentHeaders) {
+  const provenanceHeaders = ["import_batch_id", "import_filename", "imported_by", "imported_at"];
+  const missingProvenance = provenanceHeaders.filter(h => currentHeaders.indexOf(h) === -1);
+  if (missingProvenance.length > 0) {
+    const startCol = currentHeaders.length + 1;
+    sheet.getRange(1, startCol, 1, missingProvenance.length).setValues([missingProvenance]);
+    missingProvenance.forEach(h => currentHeaders.push(h));
+  }
+  return currentHeaders;
 }
 
 /**
@@ -200,9 +224,10 @@ function sanitizeFormula(val) {
  *
  * @param {Array<Object>} rawItems Client에서 파싱된 JSON 리뷰 데이터 배열
  * @param {string} [spreadsheetIdOverride]
+ * @param {string} [importFilename] 업로드된 원본 엑셀 파일명
  * @return {Object} { status: "success"|"error", received: number, inserted: number, skipped_duplicate: number, invalid: number, fetchedAt: string }
  */
-function importReviewData(rawItems, spreadsheetIdOverride) {
+function importReviewData(rawItems, spreadsheetIdOverride, importFilename) {
   const lock = LockService.getScriptLock();
   // 동시 접근 시 최대 10초 대기
   const acquired = lock.tryLock(10000);
@@ -237,7 +262,7 @@ function importReviewData(rawItems, spreadsheetIdOverride) {
       return { status: "error", message: "시트 헤더를 읽을 수 없습니다." };
     }
 
-    const headers = data[0].map(h => String(h).trim().toLowerCase());
+    let headers = data[0].map(h => String(h).trim().toLowerCase());
 
     const requiredHeaders = [
       "source_domain", "product_id", "product_name", "brand",
@@ -253,6 +278,15 @@ function importReviewData(rawItems, spreadsheetIdOverride) {
         message: "리뷰 데이터 형식이 올바르지 않습니다. 필요한 컬럼을 확인해 주세요."
       };
     }
+
+    // Header migration: 선택적 provenance 컬럼 idempotent 추가
+    headers = ensureProvenanceHeaders(sheet, headers);
+
+    // Server-authoritative batch metadata generation
+    const serverBatchId = Utilities.getUuid();
+    const serverImportedAt = new Date().toISOString();
+    const serverImportedBy = "";
+    const cleanImportFilename = sanitizeFormula(importFilename || "");
 
     // 기존 01_REVIEW_RAW의 Dedup Key (source_domain + product_id + review_id) Set 구성 (Collision-safe)
     const colSource = headers.indexOf("source_domain");
@@ -340,6 +374,10 @@ function importReviewData(rawItems, spreadsheetIdOverride) {
           if (val instanceof Date) return val.toISOString();
           return sanitizeFormula(val || new Date().toISOString());
         }
+        if (header === "import_batch_id") return sanitizeFormula(serverBatchId);
+        if (header === "import_filename") return cleanImportFilename;
+        if (header === "imported_by") return sanitizeFormula(serverImportedBy);
+        if (header === "imported_at") return sanitizeFormula(serverImportedAt);
         return sanitizeFormula(item[header] || "");
       });
 

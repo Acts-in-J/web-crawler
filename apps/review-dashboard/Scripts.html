@@ -625,11 +625,13 @@
     btnConfirm.disabled = true;
     btnConfirm.textContent = '반영 중...';
 
+    const selectedFileName = document.getElementById('selectedFileNameDisplay').textContent || '';
+
     if (typeof google !== 'undefined' && google.script && google.script.run) {
       google.script.run
         .withSuccessHandler(onImportSuccess)
         .withFailureHandler(onImportError)
-        .importReviewData(parsedItemsToImport);
+        .importReviewData(parsedItemsToImport, null, selectedFileName);
     } else {
       // Mock / Local preview fallback
       setTimeout(function() {

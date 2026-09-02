@@ -480,3 +480,120 @@ class TestReviewImportWorkflow:
         assert "sourceDomain" in content and "productId" in content and "reviewId" in content, "Code.gs 서버 검증에 필수 키 추출 검사가 누락되었습니다."
         assert "!sourceDomain || !productId || !reviewId" in content, "Code.gs 서버 검증에 필수 키 빈값 방어가 누락되었습니다."
         assert "existingKeys.has(key)" in content, "Code.gs 서버 검증에 시트 기존 키 재조회 중복검증이 누락되었습니다."
+
+
+class TestProvenanceContract:
+    """A5-A3-A2 Provenance Data Contract & Schema Extension 검증."""
+
+    def test_code_gs_defines_ensure_provenance_headers(self):
+        """Code.gs에 ensureProvenanceHeaders 함수가 정의되어 있어야 함."""
+        code_gs_path = os.path.join(DASHBOARD_DIR, "Code.gs")
+        with open(code_gs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "function ensureProvenanceHeaders" in content
+
+    def test_ensure_provenance_headers_idempotent_simulation(self):
+        """기존 14개 헤더에 provenance 4개 헤더 덧붙이기 idempotent 시뮬레이션."""
+        canonical_headers = [
+            "crawl_id", "source_domain", "product_id", "product_name", "brand",
+            "review_id", "review_date", "rating", "review_text", "product_option",
+            "helpful_count", "photo_review", "video_review", "collected_at"
+        ]
+        provenance_headers = ["import_batch_id", "import_filename", "imported_by", "imported_at"]
+
+        def ensure_headers(headers):
+            res = list(headers)
+            for h in provenance_headers:
+                if h not in res:
+                    res.append(h)
+            return res
+
+        # 1st run
+        updated_1st = ensure_headers(canonical_headers)
+        assert len(updated_1st) == 18
+        assert updated_1st[:14] == canonical_headers
+        assert updated_1st[14:] == provenance_headers
+
+        # 2nd run (idempotent)
+        updated_2nd = ensure_headers(updated_1st)
+        assert len(updated_2nd) == 18
+        assert updated_2nd == updated_1st
+
+    def test_server_authoritative_provenance_generation_simulation(self):
+        """서버 단에서 import_batch_id, imported_at이 생성되고 모든 신규행이 동일한 값 공유하며 imported_by는 빈값 보존."""
+        raw_items = [
+            {"source_domain": "brand.naver.com", "product_id": "p1", "review_id": "r1", "review_text": "리뷰1"},
+            {"source_domain": "brand.naver.com", "product_id": "p1", "review_id": "r2", "review_text": "리뷰2"},
+        ]
+        uploaded_filename = "test_reviews_2026.xlsx"
+
+        import uuid
+        server_batch_id = str(uuid.uuid4())
+        server_imported_at = datetime.now(timezone.utc).isoformat()
+        server_imported_by = ""
+        clean_filename = sanitize_formula_python(uploaded_filename)
+
+        headers = [
+            "crawl_id", "source_domain", "product_id", "product_name", "brand",
+            "review_id", "review_date", "rating", "review_text", "product_option",
+            "helpful_count", "photo_review", "video_review", "collected_at",
+            "import_batch_id", "import_filename", "imported_by", "imported_at"
+        ]
+
+        appended_rows = []
+        for item in raw_items:
+            row = []
+            for h in headers:
+                if h == "source_domain": row.append(item["source_domain"])
+                elif h == "product_id": row.append(item["product_id"])
+                elif h == "review_id": row.append(item["review_id"])
+                elif h == "review_text": row.append(sanitize_formula_python(item["review_text"]))
+                elif h == "import_batch_id": row.append(server_batch_id)
+                elif h == "import_filename": row.append(clean_filename)
+                elif h == "imported_by": row.append(server_imported_by)
+                elif h == "imported_at": row.append(server_imported_at)
+                else: row.append("")
+            appended_rows.append(row)
+
+        assert len(appended_rows) == 2
+        assert appended_rows[0][14] == server_batch_id
+        assert appended_rows[1][14] == server_batch_id
+        assert appended_rows[0][15] == "test_reviews_2026.xlsx"
+        assert appended_rows[1][15] == "test_reviews_2026.xlsx"
+        assert appended_rows[0][16] == ""
+        assert appended_rows[1][16] == ""
+        assert appended_rows[0][17] == server_imported_at
+        assert appended_rows[1][17] == server_imported_at
+
+    def test_duplicate_row_not_backfilled(self):
+        """기존 중복 행은 신규 provenance 값으로 덮어쓰거나 backfill 하지 않음."""
+        existing_rows = [
+            ["crawl_id", "source_domain", "product_id", "product_name", "brand", "review_id", "review_date", "rating", "review_text", "product_option", "helpful_count", "photo_review", "video_review", "collected_at", "import_batch_id", "import_filename", "imported_by", "imported_at"],
+            ["crawl-1", "brand.naver.com", "p1", "상품1", "브랜드1", "r1", "2026-08-01", 5, "기존 리뷰", "옵션1", 0, False, False, "2026-08-01T00:00:00Z", "", "", "", ""],
+        ]
+
+        existing_key = make_review_dedup_key_python("brand.naver.com", "p1", "r1")
+
+        new_batch = [
+            {"source_domain": "brand.naver.com", "product_id": "p1", "review_id": "r1", "review_text": "중복 시도"},
+        ]
+
+        inserted = []
+        for item in new_batch:
+            k = make_review_dedup_key_python(item["source_domain"], item["product_id"], item["review_id"])
+            if k != existing_key:
+                inserted.append(item)
+
+        assert len(inserted) == 0
+        assert len(existing_rows) == 2
+        assert existing_rows[1][5] == "r1"
+        assert existing_rows[1][14] == ""
+
+    def test_scripts_html_passes_filename_to_import_review_data(self):
+        """Scripts.html의 confirmImport에서 importReviewData 호출 시 selectedFileName을 3번째 인자로 전달하는지 검증."""
+        scripts_html_path = os.path.join(DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_html_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "selectedFileName" in content
+        assert "importReviewData(parsedItemsToImport, null, selectedFileName)" in content

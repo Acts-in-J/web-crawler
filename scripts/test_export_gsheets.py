@@ -372,7 +372,7 @@ class TestReviewDataConversion:
 
     def test_review_columns_length(self):
         from export_gsheets import REVIEW_RAW_COLUMNS
-        assert len(REVIEW_RAW_COLUMNS) == 14
+        assert len(REVIEW_RAW_COLUMNS) == 18
 
     def test_item_to_review_raw_row_values(self):
         from export_gsheets import REVIEW_RAW_COLUMNS, _item_to_review_raw_row
@@ -391,6 +391,10 @@ class TestReviewDataConversion:
         assert row[10] == 3
         assert row[11] is True
         assert row[12] is False
+        assert row[14] == ""
+        assert row[15] == ""
+        assert row[16] == ""
+        assert row[17] == ""
 
     def test_pii_excluded_from_review_columns(self):
         """개인식별 필드(writerId, maskedWriterId, writerMemberNo, orderNo 등)가 컬럼 정의에 없음."""

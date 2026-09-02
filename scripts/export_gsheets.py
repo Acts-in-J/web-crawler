@@ -72,6 +72,10 @@ REVIEW_RAW_COLUMNS: list[str] = [
     "photo_review",
     "video_review",
     "collected_at",
+    "import_batch_id",
+    "import_filename",
+    "imported_by",
+    "imported_at",
 ]
 
 # 03_CRAWL_LOG 컬럼 순서
@@ -213,6 +217,10 @@ def _item_to_review_raw_row(item: dict, crawl_id: str, source_domain: str) -> li
         bool(item.get("photo_review", False)),
         bool(item.get("video_review", False)),
         str(item.get("collected_at", now)),
+        str(item.get("import_batch_id", "")),
+        str(item.get("import_filename", "")),
+        str(item.get("imported_by", "")),
+        str(item.get("imported_at", "")),
     ]
 
 
