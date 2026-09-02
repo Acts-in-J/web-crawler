@@ -86,11 +86,10 @@ function authorizeDashboardRead(identity) {
 /**
  * 리뷰 Import (Write) 요청 서버 측 권한 검증
  * Fail-Closed 원칙:
- * 1. allowlist Property("REVIEW_DASHBOARD_ALLOWED_USERS")가 명시되어 있으면, stableIdentity가 목록에 있을 때만 ALLOW.
- * 2. allowlist Property가 없거나 비어있는 경우 (Current Operator Bootstrap Mode):
- *    - stableIdentity가 비어있으면 WRITE = DENY. (TemporaryActiveUserKey 단독으로는 절대 WRITE = ALLOW 불가)
- *    - stableIdentity가 존재하고 effectiveEmail(운영자/배포자)과 일치하거나 단일 운영자 호환 조건 충족 시 ALLOW.
- *    - 그 외 식별 불가능하거나 불일치 시 WRITE = DENY.
+ * 1. stableIdentity가 빈값("")이면 WRITE = DENY. (TemporaryActiveUserKey 단독으로는 절대 WRITE = ALLOW 불가)
+ * 2. REVIEW_DASHBOARD_ALLOWED_USERS Property 조회 실패, missing, 빈값 시 무조건 WRITE = DENY.
+ * 3. stableIdentity가 명시된 allowlist 목록에 포함되어 있으면 WRITE = ALLOW, 그렇지 않으면 WRITE = DENY.
+ * 4. 암묵적인 deployer/owner bootstrap 허용 구문(effectiveEmail 비교 등)은 전면 제거한다.
  *
  * @param {Object} [identity]
  * @return {Object} { allowed: boolean, reason: string }
@@ -98,70 +97,86 @@ function authorizeDashboardRead(identity) {
 function authorizeReviewImport(identity) {
   const reqIdentity = identity || resolveRequestIdentity();
 
+  if (!reqIdentity || !reqIdentity.stableIdentity) {
+    return {
+      allowed: false,
+      reason: "인증된 사용자 이메일 식별 정보가 없어 리뷰 데이터 반영 권한이 거부되었습니다."
+    };
+  }
+
   let rawAllowedProp = "";
   try {
     const props = PropertiesService.getScriptProperties();
-    if (props && typeof props.getProperty === "function") {
-      rawAllowedProp = props.getProperty("REVIEW_DASHBOARD_ALLOWED_USERS") || "";
+    if (!props || typeof props.getProperty !== "function") {
+      return {
+        allowed: false,
+        reason: "권한 목록 설정을 읽을 수 없어 반영 권한이 거부되었습니다."
+      };
+    }
+    rawAllowedProp = props.getProperty("REVIEW_DASHBOARD_ALLOWED_USERS");
+    if (rawAllowedProp === null || rawAllowedProp === undefined) {
+      return {
+        allowed: false,
+        reason: "리뷰 반영 권한 목록이 설정되어 있지 않습니다."
+      };
     }
   } catch (err) {
-    rawAllowedProp = "";
+    return {
+      allowed: false,
+      reason: "권한 목록 설정 조회 중 오류가 발생하여 반영 권한이 거부되었습니다."
+    };
   }
 
   const allowedListStr = String(rawAllowedProp).trim();
-
-  // Case 1: Allowlist Property가 명시적으로 존재함
-  if (allowedListStr.length > 0) {
-    if (!reqIdentity.stableIdentity) {
-      return {
-        allowed: false,
-        reason: "인증된 사용자 이메일 식별 정보가 없어 리뷰 데이터 반영 권한이 거부되었습니다."
-      };
-    }
-
-    const allowedEmails = allowedListStr.split(",").map(e => e.trim().toLowerCase()).filter(e => e.length > 0);
-    const isAllowed = allowedEmails.indexOf(reqIdentity.stableIdentity) !== -1;
-
-    if (isAllowed) {
-      return { allowed: true, reason: "Allowlist authorized" };
-    } else {
-      return {
-        allowed: false,
-        reason: `'${reqIdentity.stableIdentity}' 계정은 리뷰 데이터 반영 권한이 없습니다.`
-      };
-    }
-  }
-
-  // Case 2: Allowlist Property가 없는 경우 (Bootstrap Mode)
-  // stableIdentity가 없으면 (익명 / TemporaryActiveUserKey 단독) 무조건 거부
-  if (!reqIdentity.stableIdentity) {
+  if (allowedListStr.length === 0) {
     return {
       allowed: false,
-      reason: "사용자 이메일 식별 정보가 없어 리뷰 데이터 반영 권한이 거부되었습니다."
+      reason: "리뷰 반영 권한 목록이 비어 있어 반영 권한이 거부되었습니다."
     };
   }
 
-  // stableIdentity가 존재하고 allowlist 미설정 시 운영자와 동일하거나 MYSELF 환경일 경우 허용, 다를 경우 FAIL-CLOSED
-  if (reqIdentity.effectiveEmail && reqIdentity.stableIdentity !== reqIdentity.effectiveEmail) {
+  const allowedEmails = allowedListStr.split(",").map(e => e.trim().toLowerCase()).filter(e => e.length > 0);
+  const isAllowed = allowedEmails.indexOf(reqIdentity.stableIdentity) !== -1;
+
+  if (isAllowed) {
+    return { allowed: true, reason: "Allowlist authorized" };
+  } else {
     return {
       allowed: false,
-      reason: "멀티 유저 권한 목록이 설정되지 않아 데이터 반영 권한이 거부되었습니다."
+      reason: `'${reqIdentity.stableIdentity}' 계정은 리뷰 데이터 반영 권한이 없습니다.`
     };
   }
-
-  return {
-    allowed: true,
-    reason: "Single operator bootstrap authorized"
-  };
 }
 
 /**
- * Google Sheet 01_REVIEW_RAW 데이터 조회 및 Object 변환
+ * Google Sheet 01_REVIEW_RAW 데이터 조회 및 Object 변환 (Public Entry Point)
+ * 브라우저 클라이언트 호출용. 서버 고정 DEFAULT_SPREADSHEET_ID만 사용한다.
  *
- * @param {string} [spreadsheetIdOverride]
  * @return {object} { status: "success"|"error", data: Array, count: number, fetchedAt: string }
  */
-function getReviewDashboardData(spreadsheetIdOverride) {
+function getReviewDashboardData() {
+  return getReviewDashboardData_(DEFAULT_SPREADSHEET_ID);
+}
+
+/**
+ * 엑셀 Import 데이터 수신 및 반영 (Public Entry Point)
+ * 브라우저 클라이언트 호출용. 서버 고정 DEFAULT_SPREADSHEET_ID만 사용한다.
+ *
+ * @param {Array<Object>} rawItems Client에서 파싱된 JSON 리뷰 데이터 배열
+ * @param {string} [importFilename] 업로드된 원본 엑셀 파일명
+ * @return {Object} { status: "success"|"error", received: number, inserted: number, skipped_duplicate: number, invalid: number, fetchedAt: string }
+ */
+function importReviewData(rawItems, importFilename) {
+  return importReviewData_(rawItems, DEFAULT_SPREADSHEET_ID, importFilename);
+}
+
+/**
+ * 리뷰 Dashboard Read 내부 헬퍼 (Private Server Function - Browser 호출 불가)
+ *
+ * @param {string} targetSpreadsheetId
+ * @return {object}
+ */
+function getReviewDashboardData_(targetSpreadsheetId) {
   const identity = resolveRequestIdentity();
   const authResult = authorizeDashboardRead(identity);
   if (!authResult.allowed) {
@@ -172,7 +187,6 @@ function getReviewDashboardData(spreadsheetIdOverride) {
   }
 
   try {
-    const targetSpreadsheetId = spreadsheetIdOverride || DEFAULT_SPREADSHEET_ID;
     const ss = SpreadsheetApp.openById(targetSpreadsheetId);
     if (!ss) {
       return {
@@ -367,14 +381,14 @@ function sanitizeFormula(val) {
 }
 
 /**
- * 엑셀 Import 데이터 수신, LockService 동시성 보호, 서버 측 검증, 중복 제거 및 Append Only 처리
+ * 엑셀 Import 내부 헬퍼 (Private Server Function - Browser 호출 불가)
  *
  * @param {Array<Object>} rawItems Client에서 파싱된 JSON 리뷰 데이터 배열
- * @param {string} [spreadsheetIdOverride]
+ * @param {string} targetSpreadsheetId 대상 Spreadsheet ID
  * @param {string} [importFilename] 업로드된 원본 엑셀 파일명
  * @return {Object} { status: "success"|"error", received: number, inserted: number, skipped_duplicate: number, invalid: number, fetchedAt: string }
  */
-function importReviewData(rawItems, spreadsheetIdOverride, importFilename) {
+function importReviewData_(rawItems, targetSpreadsheetId, importFilename) {
   const identity = resolveRequestIdentity();
   const authResult = authorizeReviewImport(identity);
   if (!authResult.allowed) {
@@ -402,7 +416,6 @@ function importReviewData(rawItems, spreadsheetIdOverride, importFilename) {
       };
     }
 
-    const targetSpreadsheetId = spreadsheetIdOverride || DEFAULT_SPREADSHEET_ID;
     const ss = SpreadsheetApp.openById(targetSpreadsheetId);
     if (!ss) {
       return { status: "error", message: "Spreadsheet를 찾을 수 없습니다." };

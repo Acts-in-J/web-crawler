@@ -590,17 +590,17 @@ class TestProvenanceContract:
         assert existing_rows[1][14] == ""
 
     def test_scripts_html_passes_filename_to_import_review_data(self):
-        """Scripts.html의 confirmImport에서 importReviewData 호출 시 selectedFileName을 3번째 인자로 전달하는지 검증."""
+        """Scripts.html의 confirmImport에서 importReviewData 호출 시 selectedFileName을 전달하는지 검증."""
         scripts_html_path = os.path.join(DASHBOARD_DIR, "Scripts.html")
         with open(scripts_html_path, "r", encoding="utf-8") as f:
             content = f.read()
 
         assert "selectedFileName" in content
-        assert "importReviewData(parsedItemsToImport, null, selectedFileName)" in content
+        assert "importReviewData(parsedItemsToImport, selectedFileName)" in content
 
 
 class TestIdentityAndAuthorizationFoundation:
-    """A5-A3-A3 Multi-User Identity & Authorization Foundation 단위 테스트."""
+    """A5-A3-A3-FIX1 Multi-User Identity & Fail-Closed Authorization Foundation 단위 테스트."""
 
     def test_code_gs_defines_identity_and_authorization_functions(self):
         """Code.gs에 resolveRequestIdentity, authorizeDashboardRead, authorizeReviewImport가 정의되어 있어야 함."""
@@ -648,42 +648,67 @@ class TestIdentityAndAuthorizationFoundation:
         assert id2["stableIdentity"] == ""
         assert id2["authenticated"] is False
 
-    def test_authorization_allowlist_evaluation(self):
-        """Allowlist 설정 유무에 따른 Fail-Closed 및 Bootstrap 허용 판단 검증."""
-        def authorize_import_python(identity, allowlist_prop=""):
-            raw_prop = str(allowlist_prop or "").strip()
-            if len(raw_prop) > 0:
-                if not identity["stableIdentity"]:
-                    return {"allowed": False, "reason": "인증된 유저 없음"}
-                allowed_emails = [e.strip().lower() for e in raw_prop.split(",") if e.strip()]
-                if identity["stableIdentity"] in allowed_emails:
-                    return {"allowed": True, "reason": "Allowlist authorized"}
-                else:
-                    return {"allowed": False, "reason": "Allowlist 미포함"}
+    def test_strict_fail_closed_authorization_without_bootstrap(self):
+        """FIX1: Allowlist 미설정, 빈값, 실패, 또는 activeEmail===effectiveEmail 동등성 여부와 상관없이 allowlist에 없으면 무조건 DENY 검증."""
+        def authorize_import_strict(identity, allowlist_prop=None, prop_error=False):
+            if not identity or not identity.get("stableIdentity"):
+                return {"allowed": False, "reason": "인증된 사용자 이메일 식별 정보 없음"}
 
-            # Bootstrap Mode (Allowlist unconfigured)
-            if not identity["stableIdentity"]:
-                return {"allowed": False, "reason": "인증된 유저 없음"}
-            if identity.get("effectiveEmail") and identity["stableIdentity"] != identity["effectiveEmail"]:
-                return {"allowed": False, "reason": "운영자와 일치하지 않음"}
-            return {"allowed": True, "reason": "Bootstrap authorized"}
+            if prop_error or allowlist_prop is None:
+                return {"allowed": False, "reason": "권한 목록 미설정 또는 조회 실패"}
 
-        id_alice = {"stableIdentity": "alice@company.com", "effectiveEmail": "deployer@syncrown.com"}
+            raw_prop = str(allowlist_prop).strip()
+            if len(raw_prop) == 0:
+                return {"allowed": False, "reason": "권한 목록 비어있음"}
+
+            allowed_emails = [e.strip().lower() for e in raw_prop.split(",") if e.strip()]
+            if identity["stableIdentity"] in allowed_emails:
+                return {"allowed": True, "reason": "Allowlist authorized"}
+            else:
+                return {"allowed": False, "reason": "Allowlist 미포함"}
+
         id_deployer = {"stableIdentity": "deployer@syncrown.com", "effectiveEmail": "deployer@syncrown.com"}
+        id_alice = {"stableIdentity": "alice@company.com", "effectiveEmail": "deployer@syncrown.com"}
         id_anonymous = {"stableIdentity": "", "effectiveEmail": "deployer@syncrown.com", "temporaryUserKey": "tmp-999"}
 
-        # 1. TemporaryActiveUserKey alone -> WRITE = DENY
-        assert authorize_import_python(id_anonymous, "")["allowed"] is False
-        assert authorize_import_python(id_anonymous, "alice@company.com")["allowed"] is False
+        # 1. Missing allowlist (None) -> WRITE DENY for deployer & alice
+        assert authorize_import_strict(id_deployer, None)["allowed"] is False
+        assert authorize_import_strict(id_alice, None)["allowed"] is False
 
-        # 2. Allowlist configured -> explicit match ALLOW, mismatch DENY
+        # 2. Blank allowlist ("") -> WRITE DENY
+        assert authorize_import_strict(id_deployer, "")["allowed"] is False
+
+        # 3. PropertiesService failure -> WRITE DENY
+        assert authorize_import_strict(id_deployer, prop_error=True)["allowed"] is False
+
+        # 4. activeEmail === effectiveEmail with missing allowlist -> WRITE DENY (Bootstrap removed!)
+        assert authorize_import_strict(id_deployer, None)["allowed"] is False
+
+        # 5. Explicit allowlist -> Match ALLOW, Mismatch DENY
         prop = "alice@company.com, bob@company.com"
-        assert authorize_import_python(id_alice, prop)["allowed"] is True
-        assert authorize_import_python(id_deployer, prop)["allowed"] is False
+        assert authorize_import_strict(id_alice, prop)["allowed"] is True
+        assert authorize_import_strict(id_deployer, prop)["allowed"] is False
 
-        # 3. Allowlist unconfigured -> Deployer bootstrap ALLOW, mismatch DENY
-        assert authorize_import_python(id_deployer, "")["allowed"] is True
-        assert authorize_import_python(id_alice, "")["allowed"] is False
+        # 6. TemporaryActiveUserKey alone -> WRITE DENY
+        assert authorize_import_strict(id_anonymous, prop)["allowed"] is False
+
+    def test_public_functions_do_not_accept_spreadsheet_id_override(self):
+        """FIX2: 공개 진입점 함수(getReviewDashboardData, importReviewData)가 spreadsheetIdOverride를 받지 않고 서버 고정 ID를 사용하며 _ 헬퍼로 위임하는지 검증."""
+        code_gs_path = os.path.join(DASHBOARD_DIR, "Code.gs")
+        with open(code_gs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Public getReviewDashboardData() has 0 parameters
+        assert "function getReviewDashboardData()" in content
+        assert "getReviewDashboardData_(DEFAULT_SPREADSHEET_ID)" in content
+
+        # Public importReviewData(rawItems, importFilename) has 2 parameters
+        assert "function importReviewData(rawItems, importFilename)" in content
+        assert "importReviewData_(rawItems, DEFAULT_SPREADSHEET_ID, importFilename)" in content
+
+        # Private helpers exist with _ suffix
+        assert "function getReviewDashboardData_(targetSpreadsheetId)" in content
+        assert "function importReviewData_(rawItems, targetSpreadsheetId, importFilename)" in content
 
     def test_client_cannot_forge_imported_by(self):
         """클라이언트가 rawItem 내에 imported_by를 위조해 전송하더라도 서버에서 identity.stableIdentity로 오버라이드됨을 검증."""
@@ -700,7 +725,6 @@ class TestIdentityAndAuthorizationFoundation:
         server_identity = {"stableIdentity": "authorized_user@company.com"}
         server_imported_by = sanitize_formula_python(server_identity["stableIdentity"])
 
-        # Server row construction logic
         item = raw_items_with_forgery[0]
         computed_imported_by = server_imported_by
 

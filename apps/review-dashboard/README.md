@@ -37,7 +37,7 @@
 
 ---
 
-## Multi-User Identity & Authorization Foundation (A5-A3-A3)
+## Multi-User Identity & Authorization Foundation (A5-A3-A3 / FIX1)
 
 ### Identity vs. Authorization Separation
 * **Identity != Authorization**: The existence of a valid user identity (`activeEmail` / `stableIdentity`) does not automatically grant write permissions. Identity answers *who* is requesting; Authorization evaluates *whether* that identity is permitted to write.
@@ -48,12 +48,13 @@
   * `stableIdentity`: Contains `activeEmail` if non-empty, otherwise remains empty (`""`). Never substitutes `effectiveEmail` or `temporaryUserKey`.
   * `authenticated`: `true` only when `stableIdentity` is non-empty.
 
-### Server-Side Fail-Closed Authorization (`authorizeReviewImport`)
+### Strict Fail-Closed Authorization (`authorizeReviewImport`)
+* **Mandatory Allowlist**: `REVIEW_DASHBOARD_ALLOWED_USERS` ScriptProperty is mandatory for write authorization. If missing, null, blank, or if property lookup fails, all write requests fail closed (`WRITE = DENY`).
+* **No Implicit Deployer Bootstrap**: `effectiveEmail` and equality check (`activeEmail === effectiveEmail`) are **NEVER** used as implicit authorization credentials. There is no implicit owner/deployer bypass.
 * **Server-Authoritative `imported_by`**: `imported_by` is set exclusively on the server to `identity.stableIdentity`. Any client-submitted `imported_by` in payload is strictly ignored to prevent client forgery.
 * **Fail-Closed Write Policy**: Write operations (`importReviewData`) mandate server-side authorization before acquiring script locks or mutating sheet headers/rows.
-* **Allowlist Property (`REVIEW_DASHBOARD_ALLOWED_USERS`)**:
-  * Storage: Apps Script `ScriptProperties` under key `REVIEW_DASHBOARD_ALLOWED_USERS`.
-  * Format: Comma-separated normalized emails (e.g. `user1@syncrown.com, user2@syncrown.com`).
-  * If configured: Only emails explicitly listed in `REVIEW_DASHBOARD_ALLOWED_USERS` receive `WRITE = ALLOW`. All others receive `WRITE = DENY`.
-  * If unconfigured (Bootstrap Mode): Single-operator deployment (`access: MYSELF`, `executeAs: USER_DEPLOYING`) allows the deployer/operator (`stableIdentity === effectiveEmail`) to continue functioning without manual property setup. Access by any other Google user or unauthenticated session is rejected (`WRITE = DENY`).
-* **Deployment & Production Safeguard**: Production deployment settings remain unchanged (`executeAs: USER_DEPLOYING`, `access: MYSELF`) in A5-A3-A3. No Apps Script manifest changes or OAuth scope additions are introduced.
+
+### Spreadsheet Boundary Hardening (FIX2)
+* **Server-Controlled Target**: Browser-facing public functions (`getReviewDashboardData()` and `importReviewData(rawItems, importFilename)`) do **NOT** accept arbitrary `spreadsheetIdOverride` parameters. Target selection is strictly controlled on the server via `DEFAULT_SPREADSHEET_ID`.
+* **Private Server Helpers**: Internal implementations (`getReviewDashboardData_` and `importReviewData_`) use the `_` suffix convention in Apps Script to prevent client invocation via `google.script.run`.
+* **Production Deployment**: Production Version 3 remains unchanged. Production deployment settings remain `executeAs: USER_DEPLOYING` and `access: MYSELF`.

@@ -631,7 +631,7 @@
       google.script.run
         .withSuccessHandler(onImportSuccess)
         .withFailureHandler(onImportError)
-        .importReviewData(parsedItemsToImport, null, selectedFileName);
+        .importReviewData(parsedItemsToImport, selectedFileName);
     } else {
       // Mock / Local preview fallback
       setTimeout(function() {
