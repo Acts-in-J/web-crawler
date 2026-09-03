@@ -693,7 +693,7 @@ class TestIdentityAndAuthorizationFoundation:
         assert authorize_import_strict(id_anonymous, prop)["allowed"] is False
 
     def test_strict_fail_closed_read_authorization(self):
-        """Dashboard read authorization MUST be fail-closed."""
+        """Dashboard read authorization MUST be fail-closed (Python model test)."""
         def authorize_read_strict(identity, allowlist_prop=None, prop_error=False):
             if not identity or not identity.get("stableIdentity"):
                 return {"allowed": False, "reason": "인증된 사용자 식별 정보 없음"}
@@ -711,24 +711,65 @@ class TestIdentityAndAuthorizationFoundation:
             else:
                 return {"allowed": False, "reason": "조회 권한 없음"}
 
+        def authorize_write_strict(identity, allowlist_prop=None, prop_error=False):
+            if not identity or not identity.get("stableIdentity"):
+                return {"allowed": False}
+            if prop_error or allowlist_prop is None or len(str(allowlist_prop).strip()) == 0:
+                return {"allowed": False}
+            allowed_emails = [e.strip().lower() for e in str(allowlist_prop).split(",") if e.strip()]
+            return {"allowed": identity["stableIdentity"] in allowed_emails}
+
         id_deployer = {"stableIdentity": "deployer@syncrown.com"}
-        id_alice = {"stableIdentity": "alice@company.com"}
+        id_reader = {"stableIdentity": "reader@company.com"}
+        id_writer = {"stableIdentity": "writer@company.com"}
         id_anonymous = {"stableIdentity": ""}
 
-        # 1. Missing allowlist -> READ DENY
-        assert authorize_read_strict(id_deployer, None)["allowed"] is False
+        read_prop = "reader@company.com"
+        write_prop = "writer@company.com"
 
-        # 2. Blank allowlist -> READ DENY
-        assert authorize_read_strict(id_deployer, "")["allowed"] is False
+        # 1. authorized reader => ALLOW
+        assert authorize_read_strict(id_reader, read_prop)["allowed"] is True
 
-        # 3. Explicit allowlist -> Match ALLOW, Mismatch DENY
-        prop = "alice@company.com"
-        assert authorize_read_strict(id_alice, prop)["allowed"] is True
-        assert authorize_read_strict(id_deployer, prop)["allowed"] is False
+        # 2. unauthorized reader => DENY
+        assert authorize_read_strict(id_deployer, read_prop)["allowed"] is False
 
-        # 4. Anonymous (Empty/Missing identity) -> READ DENY
-        assert authorize_read_strict(id_anonymous, prop)["allowed"] is False
-        assert authorize_read_strict(None, prop)["allowed"] is False
+        # 3. missing identity => DENY
+        assert authorize_read_strict(None, read_prop)["allowed"] is False
+
+        # 4. empty identity => DENY
+        assert authorize_read_strict(id_anonymous, read_prop)["allowed"] is False
+
+        # 5. missing READ allowlist property => DENY
+        assert authorize_read_strict(id_reader, None)["allowed"] is False
+
+        # 6. blank READ allowlist property => DENY
+        assert authorize_read_strict(id_reader, "")["allowed"] is False
+
+        # 7. READ property lookup failure / exception => DENY
+        assert authorize_read_strict(id_reader, prop_error=True)["allowed"] is False
+
+        # 8. write-only user (in WRITE but not READ) => READ DENY
+        assert authorize_read_strict(id_writer, read_prop)["allowed"] is False
+
+        # 9. read-only user (in READ but not WRITE) => READ ALLOW, IMPORT DENY
+        assert authorize_read_strict(id_reader, read_prop)["allowed"] is True
+        assert authorize_write_strict(id_reader, write_prop)["allowed"] is False
+
+    def test_authorization_precedes_spreadsheet_open_in_get_review_dashboard_data(self):
+        """Code.gs의 getReviewDashboardData_ 함수에서 authorizeDashboardRead가 SpreadsheetApp.openById 보다 먼저 위치함을 검증 (Source contract test)."""
+        code_gs_path = os.path.join(DASHBOARD_DIR, "Code.gs")
+        with open(code_gs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        read_fn_start = content.find("function getReviewDashboardData_")
+        assert read_fn_start != -1
+
+        auth_call_pos = content.find("authorizeDashboardRead(identity)", read_fn_start)
+        ss_open_pos = content.find("SpreadsheetApp.openById", read_fn_start)
+
+        assert auth_call_pos != -1, "authorizeDashboardRead(identity) call missing"
+        assert ss_open_pos != -1, "SpreadsheetApp.openById call missing"
+        assert auth_call_pos < ss_open_pos, "authorizeDashboardRead must precede SpreadsheetApp.openById"
 
 
     def test_public_functions_do_not_accept_spreadsheet_id_override(self):

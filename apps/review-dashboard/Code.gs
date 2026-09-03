@@ -96,8 +96,8 @@ function authorizeDashboardRead(identity) {
       };
     }
     // We can use the same allowlist or a specific read allowlist.
-    // Let's use REVIEW_DASHBOARD_ALLOWED_USERS as the canonical source.
-    rawAllowedProp = props.getProperty("REVIEW_DASHBOARD_ALLOWED_USERS");
+    // Let's use REVIEW_DASHBOARD_READ_ALLOWED_USERS as the canonical source.
+    rawAllowedProp = props.getProperty("REVIEW_DASHBOARD_READ_ALLOWED_USERS");
     if (rawAllowedProp === null || rawAllowedProp === undefined) {
       return {
         allowed: false,
