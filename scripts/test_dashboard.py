@@ -982,4 +982,199 @@ class TestMultiUserConcurrencyAndRuntimeAccessPrep:
         assert "Production Version 3 MUST remain untouched" in content
 
 
+class TestKeywordIntelligence:
+    """WEB-CRAWLER-REVIEW-A5-KEYWORD-INTELLIGENCE-A1 단위 및 소스 계약 테스트."""
+
+    DEFAULT_STOPWORDS = {
+        '그리고', '하지만', '정말', '너무', '그냥', '있는', '없는', '합니다', '했어요', '입니다',
+        '있는것', '같아요', '하고', '해서', '하면', '이거', '이것', '하나', '것도', '많이',
+        '아주', '조금', '다시', '지금', '되어', '되면', '까지', '부터', '으로', '에게', '한테',
+        'the', 'and', 'for', 'this', 'that', 'with', 'from', 'they', 'them', 'what', 'have', 'has', 'had', 'were', 'will', 'would', 'could', 'should'
+    }
+
+    def extract_tokens(self, text):
+        if not text:
+            return []
+        cleaned = re.sub(r'[^a-zA-Z0-9\u3131-\u318E\uAC00-\uD7A3\s]', ' ', str(text).lower())
+        raw_tokens = cleaned.split()
+        valid = []
+        for t in raw_tokens:
+            token = t.strip()
+            if not token or len(token) < 2 or token.isdigit() or token in self.DEFAULT_STOPWORDS:
+                continue
+            valid.append(token)
+        return valid
+
+    def calculate_keyword_frequencies(self, review_list, max_terms=12, min_count=2):
+        if not review_list:
+            return []
+        freq_map = {}
+        for r in review_list:
+            text = r.get("review_text") or ""
+            tokens = self.extract_tokens(text)
+            unique_terms = set(tokens)
+            for term in unique_terms:
+                freq_map[term] = freq_map.get(term, 0) + 1
+
+        items = [{"term": k, "count": v} for k, v in freq_map.items() if v >= min_count]
+        # Sort: count DESC, term ASC
+        items.sort(key=lambda x: (-x["count"], x["term"]))
+        return items[:max_terms]
+
+    def test_korean_term_extraction(self):
+        text = "배송 빠르고 제품 상태 좋습니다"
+        tokens = self.extract_tokens(text)
+        assert "배송" in tokens
+        assert "빠르고" in tokens
+        assert "제품" in tokens
+        assert "상태" in tokens
+
+    def test_english_normalization(self):
+        text = "Good Quality PRODUCT Performance"
+        tokens = self.extract_tokens(text)
+        assert "good" in tokens
+        assert "quality" in tokens
+        assert "product" in tokens
+        assert "performance" in tokens
+
+    def test_stopword_removal(self):
+        text = "그리고 제품이 정말 너무 좋아요 for this product"
+        tokens = self.extract_tokens(text)
+        assert "그리고" not in tokens
+        assert "정말" not in tokens
+        assert "너무" not in tokens
+        assert "for" not in tokens
+        assert "this" not in tokens
+        assert "제품이" in tokens
+        assert "좋아요" in tokens
+
+    def test_punctuation_noise_removal(self):
+        text = "배송!@#$%^&*()_+ 최고의-품질... [추천]"
+        tokens = self.extract_tokens(text)
+        assert "배송" in tokens
+        assert "최고의" in tokens
+        assert "품질" in tokens
+        assert "추천" in tokens
+
+    def test_short_token_removal(self):
+        text = "아 가 배송 짱 b 좋음"
+        tokens = self.extract_tokens(text)
+        assert "아" not in tokens
+        assert "가" not in tokens
+        assert "b" not in tokens
+        assert "배송" in tokens
+        assert "좋음" in tokens
+
+    def test_numeric_only_removal(self):
+        text = "2026년 100점 배송 9999"
+        tokens = self.extract_tokens(text)
+        assert "100점" in tokens
+        assert "2026년" in tokens
+        assert "9999" not in tokens
+
+    def test_per_review_occurrence_count(self):
+        # One review with repeated "배송 배송 배송" -> counts once
+        reviews = [{"review_text": "배송 배송 배송 정말 배송 상태 좋음"}, {"review_text": "배송 빠른 배송"}]
+        res = self.calculate_keyword_frequencies(reviews, min_count=1)
+        term_map = {item["term"]: item["count"] for item in res}
+        assert term_map["배송"] == 2  # Appears in 2 reviews, not 5 times
+
+    def test_multi_review_frequency_accumulation(self):
+        reviews = [
+            {"review_text": "배송 완전 빠름"},
+            {"review_text": "배송 지연 발생"},
+            {"review_text": "품질 좋지만 배송 늦음"}
+        ]
+        res = self.calculate_keyword_frequencies(reviews, min_count=1)
+        term_map = {item["term"]: item["count"] for item in res}
+        assert term_map["배송"] == 3
+
+    def test_deterministic_sort_count_desc_term_asc(self):
+        reviews = [
+            {"review_text": "나비 나비 사자 사자 바다 바다"},
+            {"review_text": "나비 사자 바다 가방 가방"}
+        ]
+        res = self.calculate_keyword_frequencies(reviews, min_count=2)
+        # count=2 for 나비, 바다, 사자 (count DESC, term ASC). 가방 (count=1) excluded.
+        assert [x["term"] for x in res] == ["나비", "바다", "사자"]
+
+    def test_top_12_cap(self):
+        # 15 distinct terms across 2 reviews
+        reviews = [
+            {"review_text": "t01 t02 t03 t04 t05 t06 t07 t08 t09 t10 t11 t12 t13 t14 t15"},
+            {"review_text": "t01 t02 t03 t04 t05 t06 t07 t08 t09 t10 t11 t12 t13 t14 t15"}
+        ]
+        res = self.calculate_keyword_frequencies(reviews, max_terms=12, min_count=1)
+        assert len(res) == 12
+
+    def test_low_rating_subset_rating_le_3(self):
+        reviews = [
+            {"review_text": "배송 최고 최고", "rating": 5},
+            {"review_text": "배송 불만 파손", "rating": 1},
+            {"review_text": "배송 불만 지연", "rating": 3},
+            {"review_text": "품질 대족", "rating": 4}
+        ]
+        low_rating_reviews = [r for r in reviews if r["rating"] <= 3]
+        res = self.calculate_keyword_frequencies(low_rating_reviews, min_count=1)
+        terms = [x["term"] for x in res]
+        assert "불만" in terms
+        assert "파손" in terms
+        assert "지연" in terms
+        assert "대족" not in terms
+
+    def test_high_rating_excluded_from_low_rating_ranking(self):
+        reviews = [
+            {"review_text": "완벽함 만족", "rating": 5},
+            {"review_text": "최고의선택", "rating": 4},
+            {"review_text": "고장 교환필요", "rating": 2}
+        ]
+        low_rating_reviews = [r for r in reviews if r["rating"] <= 3]
+        res = self.calculate_keyword_frequencies(low_rating_reviews, min_count=1)
+        terms = [x["term"] for x in res]
+        assert "고장" in terms
+        assert "교환필요" in terms
+        assert "완벽함" not in terms
+        assert "만족" not in terms
+
+    def test_empty_state_handling(self):
+        assert self.calculate_keyword_frequencies([], min_count=1) == []
+        assert self.calculate_keyword_frequencies([{"review_text": "123 !@#"}], min_count=1) == []
+
+    def test_source_contract_keyword_widget_elements_exist(self):
+        """Index.html, Scripts.html, Styles.html 소스 계약 검증."""
+        index_path = os.path.join(DASHBOARD_DIR, "Index.html")
+        with open(index_path, "r", encoding="utf-8") as f:
+            index_content = f.read()
+        assert "keywordIntelligenceSection" in index_content
+        assert "overallKeywordBadges" in index_content
+        assert "lowRatingKeywordBadges" in index_content
+        assert "주요 리뷰 키워드" in index_content
+        assert "저평점 리뷰 빈출어" in index_content
+
+        scripts_path = os.path.join(DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            scripts_content = f.read()
+        assert "extractReviewTokens" in scripts_content
+        assert "calculateKeywordFrequencies" in scripts_content
+        assert "renderKeywordIntelligence" in scripts_content
+        assert "onKeywordBadgeClick" in scripts_content
+
+        styles_path = os.path.join(DASHBOARD_DIR, "Styles.html")
+        with open(styles_path, "r", encoding="utf-8") as f:
+            styles_content = f.read()
+        assert ".keyword-intelligence-grid" in styles_content
+        assert ".keyword-badge" in styles_content
+        assert ".keyword-empty" in styles_content
+
+    def test_filter_semantics_structural_separation(self):
+        """applyFilters()에서 structurallyFilteredReviews가 keyword 검색 조건과 분리되어 keyword widget으로 전달되는지 소스 검증."""
+        scripts_path = os.path.join(DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            scripts_content = f.read()
+
+        assert "const structurallyFilteredReviews = allReviews.filter" in scripts_content
+        assert "renderKeywordIntelligence(structurallyFilteredReviews)" in scripts_content
+
+
+
 

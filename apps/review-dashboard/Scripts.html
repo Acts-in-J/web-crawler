@@ -122,6 +122,117 @@
     applyFilters();
   }
 
+  /* ==========================================================================
+     Keyword Intelligence Helper & Functions
+     ========================================================================== */
+
+  const DEFAULT_STOPWORDS = new Set([
+    '그리고', '하지만', '정말', '너무', '그냥', '있는', '없는', '합니다', '했어요', '입니다',
+    '있는것', '같아요', '하고', '해서', '하면', '이거', '이것', '하나', '것도', '많이',
+    '아주', '조금', '다시', '지금', '되어', '되면', '까지', '부터', '으로', '에게', '한테',
+    'the', 'and', 'for', 'this', 'that', 'with', 'from', 'they', 'them', 'what', 'have', 'has', 'had', 'were', 'will', 'would', 'could', 'should'
+  ]);
+
+  function extractReviewTokens(text) {
+    if (!text) return [];
+    // Lowercase Latin, replace non-alphanumeric & non-hangul with space
+    const cleaned = String(text).toLowerCase().replace(/[^a-zA-Z0-9\u3131-\u318E\uAC00-\uD7A3\s]/g, ' ');
+    const rawTokens = cleaned.split(/\s+/);
+    
+    const validTokens = [];
+    rawTokens.forEach(t => {
+      const token = t.trim();
+      if (!token) return;
+      if (token.length < 2) return;
+      if (/^\d+$/.test(token)) return; // Discard numeric-only
+      if (DEFAULT_STOPWORDS.has(token)) return; // Discard stopwords
+      validTokens.push(token);
+    });
+    return validTokens;
+  }
+
+  function calculateKeywordFrequencies(reviewList, maxTerms, minCount) {
+    maxTerms = maxTerms || 12;
+    minCount = minCount || 2;
+    if (!reviewList || reviewList.length === 0) return [];
+
+    const freqMap = new Map();
+
+    reviewList.forEach(r => {
+      const text = r.review_text || '';
+      const tokens = extractReviewTokens(text);
+      // Review occurrence frequency: duplicate terms within a single review count ONCE
+      const uniqueReviewTerms = new Set(tokens);
+      uniqueReviewTerms.forEach(term => {
+        freqMap.set(term, (freqMap.get(term) || 0) + 1);
+      });
+    });
+
+    const items = [];
+    freqMap.forEach((count, term) => {
+      if (count >= minCount) {
+        items.push({ term: term, count: count });
+      }
+    });
+
+    // Sort: 1. count DESC, 2. term ASC (deterministic tie-breaker)
+    items.sort((a, b) => {
+      if (b.count !== a.count) {
+        return b.count - a.count;
+      }
+      return a.term.localeCompare(b.term);
+    });
+
+    return items.slice(0, maxTerms);
+  }
+
+  function renderKeywordIntelligence(structurallyFilteredReviews) {
+    const activeKeyword = document.getElementById('filterKeyword').value.trim().toLowerCase();
+
+    // 1. Overall Keywords (from all structurally filtered reviews)
+    const overallKeywords = calculateKeywordFrequencies(structurallyFilteredReviews, 12, 2);
+    renderBadgeList('overallKeywordBadges', overallKeywords, false, activeKeyword);
+
+    // 2. Low-Rating Keywords (from structurally filtered reviews with rating <= 3)
+    const lowRatingReviews = structurallyFilteredReviews.filter(r => (r.rating || 0) <= 3);
+    const lowRatingKeywords = calculateKeywordFrequencies(lowRatingReviews, 12, 2);
+    renderBadgeList('lowRatingKeywordBadges', lowRatingKeywords, true, activeKeyword);
+  }
+
+  function renderBadgeList(containerId, keywordList, isLowRating, activeKeyword) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (!keywordList || keywordList.length === 0) {
+      container.innerHTML = '<div class="keyword-empty">분석 가능한 빈출 키워드가 없습니다.</div>';
+      return;
+    }
+
+    let html = '';
+    keywordList.forEach(item => {
+      const isActive = activeKeyword && item.term.toLowerCase() === activeKeyword;
+      const activeClass = isActive ? ' active' : '';
+      const lowClass = isLowRating ? ' low-rating-badge' : '';
+      
+      html += `
+        <button type="button" class="keyword-badge${lowClass}${activeClass}" onclick="onKeywordBadgeClick('${escapeHtml(item.term)}')">
+          <span class="badge-term">${escapeHtml(item.term)}</span>
+          <span class="badge-count">${item.count}</span>
+        </button>
+      `;
+    });
+
+    container.innerHTML = html;
+  }
+
+  function onKeywordBadgeClick(term) {
+    const keywordInput = document.getElementById('filterKeyword');
+    if (keywordInput) {
+      keywordInput.value = term;
+      applyFilters();
+    }
+  }
+
   function applyFilters() {
     const selectedProd = document.getElementById('filterProduct').value;
     const startDate = document.getElementById('filterStartDate').value;
@@ -129,7 +240,8 @@
     const selectedRating = document.getElementById('filterRating').value;
     const keyword = document.getElementById('filterKeyword').value.trim().toLowerCase();
 
-    filteredReviews = allReviews.filter(function(r) {
+    // Population for Keyword Widget (structural filters only - prevents recursive collapse)
+    const structurallyFilteredReviews = allReviews.filter(function(r) {
       // Product Filter
       if (selectedProd !== 'all' && r.product_id !== selectedProd) {
         return false;
@@ -149,7 +261,11 @@
         return false;
       }
 
-      // Keyword Search Filter
+      return true;
+    });
+
+    // Population for Review Cards & KPIs (includes keyword search filter)
+    filteredReviews = structurallyFilteredReviews.filter(function(r) {
       if (keyword) {
         const text = (r.review_text || '').toLowerCase();
         const opt = (r.product_option || '').toLowerCase();
@@ -173,6 +289,7 @@
     updateKPIs();
     renderMonthlyChart();
     renderRatingBarChart();
+    renderKeywordIntelligence(structurallyFilteredReviews);
     renderReviewCards();
   }
 

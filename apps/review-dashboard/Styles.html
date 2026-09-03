@@ -805,4 +805,114 @@
   .btn-primary:not(:disabled):hover {
     opacity: 0.9;
   }
+
+  /* Keyword Intelligence Grid */
+  .keyword-intelligence-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  @media (max-width: 768px) {
+    .keyword-intelligence-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .keyword-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 20px 24px;
+  }
+
+  .keyword-card.low-rating-card {
+    border-color: rgba(244, 63, 94, 0.3);
+  }
+
+  .keyword-card-header {
+    margin-bottom: 16px;
+  }
+
+  .keyword-card-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .keyword-subtitle {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
+  .keyword-badges-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 48px;
+    align-items: center;
+  }
+
+  .keyword-badge {
+    background-color: var(--bg-main);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    padding: 6px 12px;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+  }
+
+  .keyword-badge:hover {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+    transform: translateY(-1px);
+  }
+
+  .keyword-badge.active {
+    background-color: rgba(56, 189, 248, 0.15);
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+    font-weight: 700;
+  }
+
+  .keyword-badge.low-rating-badge:hover {
+    border-color: var(--accent-rose);
+    color: var(--accent-rose);
+  }
+
+  .keyword-badge.low-rating-badge.active {
+    background-color: rgba(244, 63, 94, 0.15);
+    border-color: var(--accent-rose);
+    color: var(--accent-rose);
+    font-weight: 700;
+  }
+
+  .badge-term {
+    color: inherit;
+  }
+
+  .badge-count {
+    font-size: 0.75rem;
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 10px;
+    color: var(--text-secondary);
+  }
+
+  .keyword-empty {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    padding: 12px 0;
+  }
 </style>
