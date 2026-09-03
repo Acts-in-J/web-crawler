@@ -692,6 +692,45 @@ class TestIdentityAndAuthorizationFoundation:
         # 6. TemporaryActiveUserKey alone -> WRITE DENY
         assert authorize_import_strict(id_anonymous, prop)["allowed"] is False
 
+    def test_strict_fail_closed_read_authorization(self):
+        """Dashboard read authorization MUST be fail-closed."""
+        def authorize_read_strict(identity, allowlist_prop=None, prop_error=False):
+            if not identity or not identity.get("stableIdentity"):
+                return {"allowed": False, "reason": "인증된 사용자 식별 정보 없음"}
+
+            if prop_error or allowlist_prop is None:
+                return {"allowed": False, "reason": "조회 권한 목록 미설정 또는 조회 실패"}
+
+            raw_prop = str(allowlist_prop).strip()
+            if len(raw_prop) == 0:
+                return {"allowed": False, "reason": "조회 권한 목록 비어있음"}
+
+            allowed_emails = [e.strip().lower() for e in raw_prop.split(",") if e.strip()]
+            if identity["stableIdentity"] in allowed_emails:
+                return {"allowed": True, "reason": "Read authorized via allowlist"}
+            else:
+                return {"allowed": False, "reason": "조회 권한 없음"}
+
+        id_deployer = {"stableIdentity": "deployer@syncrown.com"}
+        id_alice = {"stableIdentity": "alice@company.com"}
+        id_anonymous = {"stableIdentity": ""}
+
+        # 1. Missing allowlist -> READ DENY
+        assert authorize_read_strict(id_deployer, None)["allowed"] is False
+
+        # 2. Blank allowlist -> READ DENY
+        assert authorize_read_strict(id_deployer, "")["allowed"] is False
+
+        # 3. Explicit allowlist -> Match ALLOW, Mismatch DENY
+        prop = "alice@company.com"
+        assert authorize_read_strict(id_alice, prop)["allowed"] is True
+        assert authorize_read_strict(id_deployer, prop)["allowed"] is False
+
+        # 4. Anonymous (Empty/Missing identity) -> READ DENY
+        assert authorize_read_strict(id_anonymous, prop)["allowed"] is False
+        assert authorize_read_strict(None, prop)["allowed"] is False
+
+
     def test_public_functions_do_not_accept_spreadsheet_id_override(self):
         """FIX2: 공개 진입점 함수(getReviewDashboardData, importReviewData)가 spreadsheetIdOverride를 받지 않고 서버 고정 ID를 사용하며 _ 헬퍼로 위임하는지 검증."""
         code_gs_path = os.path.join(DASHBOARD_DIR, "Code.gs")

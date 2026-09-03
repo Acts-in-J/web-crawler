@@ -71,16 +71,65 @@ function resolveRequestIdentity() {
 
 /**
  * 리뷰 Dashboard Read 요청 권한 검증 (확장 가능한 구조 설계)
+ * Fail-Closed 원칙에 따라 검증한다.
  *
  * @param {Object} [identity]
  * @return {Object} { allowed: boolean, reason: string }
  */
 function authorizeDashboardRead(identity) {
   const reqIdentity = identity || resolveRequestIdentity();
-  return {
-    allowed: true,
-    reason: "Read authorized"
-  };
+
+  if (!reqIdentity || !reqIdentity.stableIdentity) {
+    return {
+      allowed: false,
+      reason: "인증된 사용자 식별 정보가 없어 대시보드 조회 권한이 거부되었습니다."
+    };
+  }
+
+  let rawAllowedProp = "";
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (!props || typeof props.getProperty !== "function") {
+      return {
+        allowed: false,
+        reason: "권한 목록 설정을 읽을 수 없어 조회 권한이 거부되었습니다."
+      };
+    }
+    // We can use the same allowlist or a specific read allowlist.
+    // Let's use REVIEW_DASHBOARD_ALLOWED_USERS as the canonical source.
+    rawAllowedProp = props.getProperty("REVIEW_DASHBOARD_ALLOWED_USERS");
+    if (rawAllowedProp === null || rawAllowedProp === undefined) {
+      return {
+        allowed: false,
+        reason: "대시보드 조회 권한 목록이 설정되어 있지 않습니다."
+      };
+    }
+  } catch (err) {
+    return {
+      allowed: false,
+      reason: "권한 목록 설정 조회 중 오류가 발생하여 조회 권한이 거부되었습니다."
+    };
+  }
+
+  const allowedListStr = String(rawAllowedProp).trim();
+  if (allowedListStr.length === 0) {
+    return {
+      allowed: false,
+      reason: "대시보드 조회 권한 목록이 비어 있어 권한이 거부되었습니다."
+    };
+  }
+
+  const allowedEmails = allowedListStr.split(",").map(e => e.trim().toLowerCase()).filter(e => e.length > 0);
+  const isAllowed = allowedEmails.indexOf(reqIdentity.stableIdentity) !== -1;
+
+  if (isAllowed) {
+    return { allowed: true, reason: "Read authorized via allowlist" };
+  } else {
+    return {
+      allowed: false,
+      reason: `'${reqIdentity.stableIdentity}' 계정은 대시보드 조회 권한이 없습니다.`
+    };
+  }
 }
 
 /**
