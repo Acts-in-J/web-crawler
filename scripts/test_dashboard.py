@@ -32,8 +32,8 @@ class TestDashboardFileContracts:
         assert manifest.get("timeZone") == "Asia/Seoul"
         assert manifest.get("runtimeVersion") == "V8"
         assert "webapp" in manifest
-        assert manifest["webapp"].get("executeAs") == "USER_DEPLOYING"
-        assert manifest["webapp"].get("access") == "MYSELF"
+        assert manifest["webapp"].get("executeAs") == "USER_ACCESSING"
+        assert manifest["webapp"].get("access") == "ANYONE"
 
     def test_no_niimbot_hardcoding_in_backend_or_frontend(self):
         """Code.gs, Index.html, Scripts.html 등에 특정 브랜드/상품 ID가 하드코딩되어 있지 않은지 검증."""
