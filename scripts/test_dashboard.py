@@ -989,6 +989,8 @@ class TestKeywordIntelligence:
         '그리고', '하지만', '정말', '너무', '그냥', '있는', '없는', '합니다', '했어요', '입니다',
         '있는것', '같아요', '하고', '해서', '하면', '이거', '이것', '하나', '것도', '많이',
         '아주', '조금', '다시', '지금', '되어', '되면', '까지', '부터', '으로', '에게', '한테',
+        '바로', '사용할', '있어서', '없이', '있어요', '다양한', '있고', '있는데', '있습니다', '있었어요',
+        '사용하기', '사용해서', '사용하면',
         'the', 'and', 'for', 'this', 'that', 'with', 'from', 'they', 'them', 'what', 'have', 'has', 'had', 'were', 'will', 'would', 'could', 'should'
     }
 
@@ -1226,6 +1228,38 @@ class TestKeywordIntelligence:
 
         assert "const structurallyFilteredReviews = allReviews.filter" in scripts_content
         assert "renderKeywordIntelligence(structurallyFilteredReviews)" in scripts_content
+
+    def test_noise_reduction_tuning_and_useful_term_preservation(self):
+        """불용어 노이즈 제거(바로, 사용할, 있어서, 없이, 있어요, 다양한) 및 유용한 키워드 보존 검증."""
+        noise_text = "바로 사용할 기능이 있어서 문제 없이 쓸 수 있어요 다양한 활용도가 최고"
+        tokens = self.extract_tokens(noise_text)
+
+        # Excluded noise terms
+        for noise in ["바로", "사용할", "있어서", "없이", "있어요", "다양한"]:
+            assert noise not in tokens, f"노이즈 토큰 미제거: {noise}"
+
+        # Preserved useful terms
+        assert "활용도가" in tokens
+        assert "기능이" in tokens
+        assert "최고" in tokens
+
+        reviews = [
+            {"review_text": "라벨지 출력 빠른 배송 라벨 인쇄 깔끔하게 바로 사용할 수 있음", "rating": 5},
+            {"review_text": "프린터 연결 쉬움 라벨 출력 품질 양호 활용도가 높음 없이도 가능", "rating": 5},
+            {"review_text": "설정 어플 편함 라벨지 대용량 디자인 우수 있어서 있어요 다양한 기능", "rating": 5}
+        ]
+        res = self.calculate_keyword_frequencies(reviews, max_terms=100, min_count=1)
+        terms = [item["term"] for item in res]
+
+        # Useful terms present
+        expected_useful = ["라벨", "라벨지", "프린터", "인쇄", "연결", "배송", "품질", "설정", "어플", "디자인", "깔끔하게", "활용도가"]
+        for useful in expected_useful:
+            assert any(useful in t for t in terms), f"유용한 단어 누락: {useful}"
+
+        # Noise terms strictly absent
+        for noise in ["바로", "사용할", "있어서", "없이", "있어요", "다양한"]:
+            assert noise not in terms, f"노이즈 단어 미제거: {noise}"
+
 
 
 
