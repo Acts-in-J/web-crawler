@@ -1114,7 +1114,7 @@ class TestKeywordIntelligence:
             {"review_text": "배송 불만 지연", "rating": 3},
             {"review_text": "품질 대족", "rating": 4}
         ]
-        low_rating_reviews = [r for r in reviews if r["rating"] <= 3]
+        low_rating_reviews = [r for r in reviews if isinstance(r.get("rating"), (int, float)) and 1 <= r["rating"] <= 3]
         res = self.calculate_keyword_frequencies(low_rating_reviews, min_count=1)
         terms = [x["term"] for x in res]
         assert "불만" in terms
@@ -1128,13 +1128,64 @@ class TestKeywordIntelligence:
             {"review_text": "최고의선택", "rating": 4},
             {"review_text": "고장 교환필요", "rating": 2}
         ]
-        low_rating_reviews = [r for r in reviews if r["rating"] <= 3]
+        low_rating_reviews = [r for r in reviews if isinstance(r.get("rating"), (int, float)) and 1 <= r["rating"] <= 3]
         res = self.calculate_keyword_frequencies(low_rating_reviews, min_count=1)
         terms = [x["term"] for x in res]
         assert "고장" in terms
         assert "교환필요" in terms
         assert "완벽함" not in terms
         assert "만족" not in terms
+
+    def test_strict_low_rating_1_to_3_stars_boundary_and_validation(self):
+        """저평점 리뷰 1~3점 엄격 필터링 (1..3 포함, 4/5/0/누락/null/비숫자 제외) 검증."""
+        def filter_low_rating(reviews):
+            result = []
+            for r in reviews:
+                rating_raw = r.get("rating")
+                try:
+                    val = float(rating_raw) if rating_raw is not None else None
+                    if val is not None and 1 <= val <= 3:
+                        result.append(r)
+                except (ValueError, TypeError):
+                    pass
+            return result
+
+        reviews = [
+            {"id": "r1", "review_text": "원점 불만", "rating": 1},      # 1. rating 1 -> INCLUDE
+            {"id": "r2", "review_text": "투점 불만", "rating": 2},      # 2. rating 2 -> INCLUDE
+            {"id": "r3", "review_text": "쓰리점 불만", "rating": 3},    # 3. rating 3 -> INCLUDE
+            {"id": "r4", "review_text": "포점 최고", "rating": 4},      # 4. rating 4 -> EXCLUDE
+            {"id": "r5", "review_text": "파이브점 최고", "rating": 5},  # 5. rating 5 -> EXCLUDE
+            {"id": "r0", "review_text": "제로점 오류", "rating": 0},    # 6. rating 0 -> EXCLUDE
+            {"id": "rm", "review_text": "누락점 오류"},                 # 7. missing rating -> EXCLUDE
+            {"id": "rn", "review_text": "널점 오류", "rating": None},   # 7. null rating -> EXCLUDE
+            {"id": "ri", "review_text": "비숫자 오류", "rating": "abc"} # 8. invalid/non-numeric rating -> EXCLUDE
+        ]
+
+        low_rating_subset = filter_low_rating(reviews)
+        included_ids = [r["id"] for r in low_rating_subset]
+
+        assert "r1" in included_ids
+        assert "r2" in included_ids
+        assert "r3" in included_ids
+        assert "r4" not in included_ids
+        assert "r5" not in included_ids
+        assert "r0" not in included_ids
+        assert "rm" not in included_ids
+        assert "rn" not in included_ids
+        assert "ri" not in included_ids
+
+        res = self.calculate_keyword_frequencies(low_rating_subset, min_count=1)
+        terms = [x["term"] for x in res]
+        assert "원점" in terms
+        assert "투점" in terms
+        assert "쓰리점" in terms
+        assert "포점" not in terms
+        assert "파이브점" not in terms
+        assert "제로점" not in terms
+        assert "누락점" not in terms
+        assert "널점" not in terms
+        assert "비숫자" not in terms
 
     def test_empty_state_handling(self):
         assert self.calculate_keyword_frequencies([], min_count=1) == []
@@ -1158,6 +1209,7 @@ class TestKeywordIntelligence:
         assert "calculateKeywordFrequencies" in scripts_content
         assert "renderKeywordIntelligence" in scripts_content
         assert "onKeywordBadgeClick" in scripts_content
+        assert "ratingNum >= 1 && ratingNum <= 3" in scripts_content
 
         styles_path = os.path.join(DASHBOARD_DIR, "Styles.html")
         with open(styles_path, "r", encoding="utf-8") as f:

@@ -193,8 +193,11 @@
     const overallKeywords = calculateKeywordFrequencies(structurallyFilteredReviews, 12, 2);
     renderBadgeList('overallKeywordBadges', overallKeywords, false, activeKeyword);
 
-    // 2. Low-Rating Keywords (from structurally filtered reviews with rating <= 3)
-    const lowRatingReviews = structurallyFilteredReviews.filter(r => (r.rating || 0) <= 3);
+    // 2. Low-Rating Keywords (from structurally filtered reviews with 1 <= rating <= 3)
+    const lowRatingReviews = structurallyFilteredReviews.filter(r => {
+      const ratingNum = parseFloat(r.rating);
+      return !isNaN(ratingNum) && ratingNum >= 1 && ratingNum <= 3;
+    });
     const lowRatingKeywords = calculateKeywordFrequencies(lowRatingReviews, 12, 2);
     renderBadgeList('lowRatingKeywordBadges', lowRatingKeywords, true, activeKeyword);
   }
