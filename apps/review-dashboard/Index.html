@@ -145,6 +145,20 @@
       </div>
     </section>
 
+    <!-- Keyword Evidence Drilldown Panel -->
+    <section id="evidenceDrilldownPanel" style="display: none;" class="evidence-panel">
+      <div class="evidence-panel-header">
+        <div class="evidence-panel-title" id="evidencePanelTitle">키워드 관련 리뷰 근거</div>
+        <button type="button" class="evidence-close-btn" id="btnCloseEvidence" onclick="clearEvidencePanel()" aria-label="닫기">✕</button>
+      </div>
+      <div id="evidencePanelBody">
+        <!-- Rendered via JS -->
+      </div>
+      <div id="evidenceMoreLink" style="display: none;" class="evidence-more-link">
+        <span>⬇ 추가 리뷰는 하단 리뷰 카드 목록에서 확인하세요</span>
+      </div>
+    </section>
+
     <!-- States: Loading, Empty, Error -->
     <div id="loadingState" class="state-container">
       <div class="spinner"></div>

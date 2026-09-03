@@ -3,6 +3,9 @@
   let filteredReviews = [];
   let displayCount = 50;
   let parsedItemsToImport = [];
+  // Evidence drilldown state
+  let activeEvidenceTerm = null;   // currently selected keyword string
+  let activeEvidenceIsLow = false; // true = came from low-rating badge
 
   document.addEventListener('DOMContentLoaded', function() {
     initEvents();
@@ -218,9 +221,10 @@
       const isActive = activeKeyword && item.term.toLowerCase() === activeKeyword;
       const activeClass = isActive ? ' active' : '';
       const lowClass = isLowRating ? ' low-rating-badge' : '';
-      
+      const lowAttr = isLowRating ? 'true' : 'false';
+
       html += `
-        <button type="button" class="keyword-badge${lowClass}${activeClass}" onclick="onKeywordBadgeClick('${escapeHtml(item.term)}')">
+        <button type="button" class="keyword-badge${lowClass}${activeClass}" onclick="onKeywordBadgeClick('${escapeHtml(item.term)}', ${lowAttr})" aria-label="${escapeHtml(item.term)} 키워드 드릴다운">
           <span class="badge-term">${escapeHtml(item.term)}</span>
           <span class="badge-count">${item.count}</span>
         </button>
@@ -230,12 +234,15 @@
     container.innerHTML = html;
   }
 
-  function onKeywordBadgeClick(term) {
+  function onKeywordBadgeClick(term, isLowRating) {
     const keywordInput = document.getElementById('filterKeyword');
     if (keywordInput) {
       keywordInput.value = term;
-      applyFilters();
     }
+    activeEvidenceTerm = term;
+    activeEvidenceIsLow = !!isLowRating;
+    applyFilters();
+    showKeywordEvidence(term, !!isLowRating);
   }
 
   function applyFilters() {
@@ -296,6 +303,147 @@
     renderRatingBarChart();
     renderKeywordIntelligence(structurallyFilteredReviews);
     renderReviewCards();
+
+    // Refresh evidence panel if active (structural filter changes should re-derive evidence)
+    if (activeEvidenceTerm) {
+      if (!keyword) {
+        // Keyword input cleared — clear evidence panel
+        activeEvidenceTerm = null;
+        activeEvidenceIsLow = false;
+        clearEvidencePanel();
+      } else {
+        // Structural filters changed while evidence is open — re-render for new population
+        showKeywordEvidence(activeEvidenceTerm, activeEvidenceIsLow);
+      }
+    }
+  }
+
+  /* ==========================================================================
+     Evidence Drilldown Functions
+     ========================================================================== */
+
+  function getEvidenceReviews(term, isLowRating) {
+    // Source population: structurally filtered (same as keyword ranking)
+    const selectedProd = document.getElementById('filterProduct').value;
+    const startDate = document.getElementById('filterStartDate').value;
+    const endDate = document.getElementById('filterEndDate').value;
+    const selectedRating = document.getElementById('filterRating').value;
+
+    let population = allReviews.filter(function(r) {
+      if (selectedProd !== 'all' && r.product_id !== selectedProd) return false;
+      const rDateStr = r.review_date ? r.review_date.substring(0, 10) : '';
+      if (startDate && rDateStr < startDate) return false;
+      if (endDate && rDateStr > endDate) return false;
+      if (selectedRating !== 'all' && Math.floor(r.rating) !== parseInt(selectedRating, 10)) return false;
+      return true;
+    });
+
+    // For low-rating keyword, restrict to valid 1..3 stars (same contract as low-rating widget)
+    if (isLowRating) {
+      population = population.filter(function(r) {
+        const ratingNum = parseFloat(r.rating);
+        return !isNaN(ratingNum) && ratingNum >= 1 && ratingNum <= 3;
+      });
+    }
+
+    // Match only on review_text (NOT product_option alone)
+    const termLower = term.toLowerCase();
+    const matched = population.filter(function(r) {
+      const text = (r.review_text || '').toLowerCase();
+      return text.includes(termLower);
+    });
+
+    // Deterministic ordering: review_date DESC, rating ASC, review_id as stable tie-breaker
+    matched.sort(function(a, b) {
+      const dateCmp = (b.review_date || '').localeCompare(a.review_date || '');
+      if (dateCmp !== 0) return dateCmp;
+      const ratingA = parseFloat(a.rating) || 0;
+      const ratingB = parseFloat(b.rating) || 0;
+      if (ratingA !== ratingB) return ratingA - ratingB;
+      return (a.review_id || '').localeCompare(b.review_id || '');
+    });
+
+    return matched;
+  }
+
+  function highlightKeywordInText(escapedText, escapedTerm) {
+    // escapedText and escapedTerm are already HTML-escaped.
+    // Replace escaped occurrences of the term (case-insensitive) with <mark> highlight.
+    // We operate purely on the escaped string so no XSS is possible.
+    if (!escapedTerm) return escapedText;
+    // Build a safe regex from the escaped term (special regex chars in the escaped string are literal)
+    const safePattern = escapedTerm.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+    const re = new RegExp('(' + safePattern + ')', 'gi');
+    return escapedText.replace(re, '<mark class="evidence-highlight">$1</mark>');
+  }
+
+  function showKeywordEvidence(term, isLowRating) {
+    const panel = document.getElementById('evidenceDrilldownPanel');
+    const titleEl = document.getElementById('evidencePanelTitle');
+    const body = document.getElementById('evidencePanelBody');
+    const moreLink = document.getElementById('evidenceMoreLink');
+    if (!panel || !body) return;
+
+    const evidenceReviews = getEvidenceReviews(term, isLowRating);
+    const total = evidenceReviews.length;
+    const MAX_INITIAL = 5;
+    const shown = evidenceReviews.slice(0, MAX_INITIAL);
+
+    // Title: '{term}' 관련 리뷰 근거 · N건
+    const escapedTerm = escapeHtml(term);
+    titleEl.textContent = '\u2018' + term + '\u2019 ' + (isLowRating ? '[저평점] ' : '') + '관련 리뷰 근거 \u00b7 ' + total.toLocaleString() + '건';
+
+    if (total === 0) {
+      body.innerHTML = '<div class="evidence-empty">선택한 키워드에 해당하는 리뷰 근거가 없습니다.</div>';
+      moreLink.style.display = 'none';
+      panel.style.display = 'block';
+      return;
+    }
+
+    let html = '<div class="evidence-items">';
+    shown.forEach(function(r) {
+      const escapedText = escapeHtml(r.review_text || '');
+      const highlightedText = highlightKeywordInText(escapedText, escapedTerm);
+      const dateStr = r.review_date ? escapeHtml(r.review_date.substring(0, 10)) : '';
+      const productStr = r.product_name ? escapeHtml(r.product_name) : (r.product_id ? escapeHtml(r.product_id) : '');
+      const ratingNum = parseFloat(r.rating) || 0;
+      const starStr = escapeHtml(getStarString(ratingNum));
+      const sourceStr = r.source_domain ? escapeHtml(r.source_domain) : '';
+
+      html += '<div class="evidence-item">';
+      html += '<div class="evidence-item-meta">';
+      html += '<span class="evidence-rating">' + starStr + ' (' + ratingNum + '점)</span>';
+      if (productStr) html += '<span class="evidence-product">' + productStr + '</span>';
+      if (dateStr) html += '<span class="evidence-date">' + dateStr + '</span>';
+      if (sourceStr) html += '<span class="evidence-source">' + sourceStr + '</span>';
+      html += '</div>';
+      html += '<div class="evidence-text">' + highlightedText + '</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    body.innerHTML = html;
+
+    if (total > MAX_INITIAL) {
+      moreLink.style.display = 'block';
+    } else {
+      moreLink.style.display = 'none';
+    }
+
+    panel.style.display = 'block';
+  }
+
+  function clearEvidencePanel() {
+    activeEvidenceTerm = null;
+    activeEvidenceIsLow = false;
+    const panel = document.getElementById('evidenceDrilldownPanel');
+    if (panel) panel.style.display = 'none';
+    // Also clear keyword input and re-apply filters to remove badge active state
+    const keywordInput = document.getElementById('filterKeyword');
+    if (keywordInput && keywordInput.value) {
+      keywordInput.value = '';
+      applyFilters();
+    }
   }
 
   function updateKPIs() {

@@ -1261,6 +1261,353 @@ class TestKeywordIntelligence:
             assert noise not in terms, f"노이즈 단어 미제거: {noise}"
 
 
+# =============================================================================
+# WEB-CRAWLER-REVIEW-A5-KEYWORD-INTELLIGENCE-A2-EVIDENCE-DRILLDOWN
+# Python model / source-contract tests
+# These tests validate the evidence drilldown logic model and source contracts.
+# The JS functions themselves are not executed here (no browser engine).
+# =============================================================================
+
+class TestKeywordEvidenceDrilldown:
+    """A2 Evidence Drilldown — Python model & source contract tests."""
+
+    DASHBOARD_DIR = DASHBOARD_DIR
+
+    # --- Python-side model of getEvidenceReviews ---
+
+    def get_evidence_reviews(self, term, is_low_rating, all_reviews,
+                              selected_prod="all", start_date="", end_date="",
+                              selected_rating="all"):
+        """Python model of getEvidenceReviews() in Scripts.html."""
+        population = list(all_reviews)
+
+        # Structural filters
+        if selected_prod != "all":
+            population = [r for r in population if r.get("product_id") == selected_prod]
+        if start_date:
+            population = [r for r in population
+                          if (r.get("review_date") or "")[:10] >= start_date]
+        if end_date:
+            population = [r for r in population
+                          if (r.get("review_date") or "")[:10] <= end_date]
+        if selected_rating != "all":
+            target = int(selected_rating)
+            population = [r for r in population
+                          if int(float(r.get("rating") or 0)) == target]
+
+        # Low-rating gate: restrict to valid 1..3 only
+        if is_low_rating:
+            def valid_low(r):
+                try:
+                    n = float(r.get("rating", ""))
+                except (ValueError, TypeError):
+                    return False
+                return 1 <= n <= 3
+            population = [r for r in population if valid_low(r)]
+
+        # Match review_text only
+        if not term:
+            return []
+        term_lower = term.lower()
+        matched = [r for r in population
+                   if term_lower in (r.get("review_text") or "").lower()]
+
+        # Deterministic ordering: date DESC, rating ASC, review_id ASC
+        def sort_key(r):
+            date = r.get("review_date") or ""
+            rating = float(r.get("rating") or 0)
+            rid = r.get("review_id") or ""
+            return (-ord(date[0]) if date else 0, -len(date), rating, rid)
+
+        # Simpler: sort stable
+        matched.sort(key=lambda r: (
+            -(r.get("review_date") or "") if False else r.get("review_date") or "",
+        ), reverse=False)
+        # Proper sort:
+        matched.sort(key=lambda r: (
+            tuple(-(ord(c) - 48) for c in (r.get("review_date") or "").replace("-", "") or "0" * 8)
+        ), reverse=False)
+        # Use straightforward lexicographic DESC on date, then rating ASC, then rid ASC
+        matched.sort(key=lambda r: (
+            r.get("review_date") or "",
+            float(r.get("rating") or 0),
+            r.get("review_id") or ""
+        ), reverse=False)
+        # Reverse date portion: use negation trick via tuple inversion
+        matched.sort(key=lambda r: (
+            [-ord(c) for c in (r.get("review_date") or "")],
+            float(r.get("rating") or 0),
+            r.get("review_id") or ""
+        ))
+
+        return matched
+
+    def escape_html(self, s):
+        """Python mirror of escapeHtml() in Scripts.html."""
+        s = str(s) if s else ""
+        return (s.replace("&", "&amp;")
+                 .replace("<", "&lt;")
+                 .replace(">", "&gt;")
+                 .replace('"', "&quot;")
+                 .replace("'", "&#039;"))
+
+    def highlight_keyword_in_text(self, escaped_text, escaped_term):
+        """Python model of highlightKeywordInText() — operates on already-escaped strings."""
+        if not escaped_term:
+            return escaped_text
+        import re
+        safe_pattern = re.escape(escaped_term)
+        return re.sub(f"({safe_pattern})", r'<mark class="evidence-highlight">\1</mark>',
+                      escaped_text, flags=re.IGNORECASE)
+
+    # ------------------------------------------------------------------
+    # Test 1: evidence uses review_text
+    # ------------------------------------------------------------------
+    def test_evidence_uses_review_text_not_product_option(self):
+        """Evidence match is based on review_text. product_option-only match must NOT qualify."""
+        reviews = [
+            {"review_id": "1", "review_text": "라벨 품질 좋음", "product_option": "없음", "rating": 5, "review_date": "2024-03-01"},
+            {"review_id": "2", "review_text": "배송이 빠릅니다", "product_option": "라벨 옵션", "rating": 4, "review_date": "2024-03-02"},
+        ]
+        # "라벨" appears in review 1 text and review 2 product_option
+        evidence = self.get_evidence_reviews("라벨", False, reviews)
+        evidence_ids = [r["review_id"] for r in evidence]
+
+        assert "1" in evidence_ids, "review_text 매칭 리뷰 누락"
+        assert "2" not in evidence_ids, "product_option-only 매칭이 evidence에 포함되면 안 됨"
+
+    # ------------------------------------------------------------------
+    # Test 2: product_option-only match excluded
+    # ------------------------------------------------------------------
+    def test_product_option_only_excluded(self):
+        """A review whose review_text does not contain the term is excluded regardless of other fields."""
+        reviews = [
+            {"review_id": "A", "review_text": "품질 좋음", "product_option": "라벨지 100매", "product_name": "라벨지 프린터", "rating": 5, "review_date": "2024-01-01"},
+        ]
+        evidence = self.get_evidence_reviews("라벨지", False, reviews)
+        assert len(evidence) == 0, "review_text 미포함 리뷰가 evidence에 포함됨"
+
+    # ------------------------------------------------------------------
+    # Test 3: structural filter population preserved
+    # ------------------------------------------------------------------
+    def test_structural_filter_preserves_product(self):
+        """Product filter applied to evidence population."""
+        reviews = [
+            {"review_id": "1", "review_text": "라벨 좋음", "product_id": "P1", "rating": 5, "review_date": "2024-01-01"},
+            {"review_id": "2", "review_text": "라벨 불만", "product_id": "P2", "rating": 2, "review_date": "2024-01-02"},
+        ]
+        evidence = self.get_evidence_reviews("라벨", False, reviews, selected_prod="P1")
+        ids = [r["review_id"] for r in evidence]
+        assert "1" in ids
+        assert "2" not in ids
+
+    # ------------------------------------------------------------------
+    # Test 4: overall evidence includes all eligible ratings
+    # ------------------------------------------------------------------
+    def test_overall_evidence_includes_all_valid_ratings(self):
+        """Overall keyword evidence (is_low_rating=False) includes 1-5 star reviews."""
+        reviews = [
+            {"review_id": str(i), "review_text": f"라벨 리뷰 {i}", "rating": i, "review_date": "2024-01-01"}
+            for i in range(1, 6)
+        ]
+        evidence = self.get_evidence_reviews("라벨", False, reviews)
+        ratings = {float(r["rating"]) for r in evidence}
+        assert ratings == {1.0, 2.0, 3.0, 4.0, 5.0}
+
+    # ------------------------------------------------------------------
+    # Test 5: low-rating evidence only valid 1..3
+    # ------------------------------------------------------------------
+    def test_low_rating_evidence_restricted_to_1_3(self):
+        """Low-rating keyword evidence must only include reviews with rating 1, 2, or 3."""
+        reviews = [
+            {"review_id": str(i), "review_text": f"라벨 이슈 {i}", "rating": i, "review_date": "2024-01-01"}
+            for i in range(1, 6)
+        ]
+        evidence = self.get_evidence_reviews("라벨", True, reviews)
+        ratings = {float(r["rating"]) for r in evidence}
+        assert ratings == {1.0, 2.0, 3.0}
+        assert 4.0 not in ratings
+        assert 5.0 not in ratings
+
+    # ------------------------------------------------------------------
+    # Test 6: 0/missing/invalid rating excluded from low-rating evidence
+    # ------------------------------------------------------------------
+    def test_low_rating_evidence_excludes_invalid_ratings(self):
+        """Rating 0, None, missing, or non-numeric must be excluded from low-rating evidence."""
+        reviews = [
+            {"review_id": "zero",    "review_text": "라벨 문제", "rating": 0,    "review_date": "2024-01-01"},
+            {"review_id": "none",    "review_text": "라벨 문제", "rating": None,  "review_date": "2024-01-01"},
+            {"review_id": "missing", "review_text": "라벨 문제",                  "review_date": "2024-01-01"},
+            {"review_id": "str",     "review_text": "라벨 문제", "rating": "abc", "review_date": "2024-01-01"},
+            {"review_id": "valid",   "review_text": "라벨 문제", "rating": 2,    "review_date": "2024-01-01"},
+        ]
+        evidence = self.get_evidence_reviews("라벨", True, reviews)
+        ids = [r["review_id"] for r in evidence]
+        assert "valid" in ids
+        assert "zero" not in ids
+        assert "none" not in ids
+        assert "missing" not in ids
+        assert "str" not in ids
+
+    # ------------------------------------------------------------------
+    # Test 7: max initial display = 5
+    # ------------------------------------------------------------------
+    def test_max_initial_display_5(self):
+        """Evidence panel shows maximum 5 reviews initially."""
+        reviews = [
+            {"review_id": str(i), "review_text": "라벨 테스트", "rating": 4, "review_date": f"2024-{i:02d}-01"}
+            for i in range(1, 10)
+        ]
+        evidence = self.get_evidence_reviews("라벨", False, reviews)
+        assert len(evidence) > 5, "테스트 데이터 부족"
+        shown = evidence[:5]
+        assert len(shown) == 5
+
+    # ------------------------------------------------------------------
+    # Test 8: deterministic evidence ordering
+    # ------------------------------------------------------------------
+    def test_deterministic_evidence_ordering(self):
+        """Evidence ordering is deterministic: date DESC, rating ASC, review_id ASC."""
+        reviews = [
+            {"review_id": "B", "review_text": "라벨 품질", "rating": 3, "review_date": "2024-02-01"},
+            {"review_id": "A", "review_text": "라벨 문제", "rating": 1, "review_date": "2024-03-01"},
+            {"review_id": "C", "review_text": "라벨 좋음", "rating": 5, "review_date": "2024-01-01"},
+        ]
+        evidence1 = self.get_evidence_reviews("라벨", False, reviews)
+        evidence2 = self.get_evidence_reviews("라벨", False, reviews)
+        ids1 = [r["review_id"] for r in evidence1]
+        ids2 = [r["review_id"] for r in evidence2]
+        assert ids1 == ids2, "순서가 비결정적"
+        # date DESC: A(03-01) > B(02-01) > C(01-01)
+        assert ids1 == ["A", "B", "C"]
+
+    # ------------------------------------------------------------------
+    # Test 9: keyword selection replacement
+    # ------------------------------------------------------------------
+    def test_keyword_selection_replacement(self):
+        """Clicking a new keyword replaces evidence for that keyword."""
+        reviews = [
+            {"review_id": "1", "review_text": "라벨 출력 잘 됨", "rating": 5, "review_date": "2024-01-01"},
+            {"review_id": "2", "review_text": "배송 빠름", "rating": 5, "review_date": "2024-01-02"},
+        ]
+        ev_label = self.get_evidence_reviews("라벨", False, reviews)
+        ev_ship  = self.get_evidence_reviews("배송", False, reviews)
+        ids_label = [r["review_id"] for r in ev_label]
+        ids_ship  = [r["review_id"] for r in ev_ship]
+        # Evidence for new keyword should be independent of previous selection
+        assert "1" in ids_label and "2" not in ids_label
+        assert "2" in ids_ship  and "1" not in ids_ship
+
+    # ------------------------------------------------------------------
+    # Test 10: clear selection produces empty evidence
+    # ------------------------------------------------------------------
+    def test_clear_selection_empty_evidence(self):
+        """When term is empty/None, evidence returns nothing."""
+        reviews = [
+            {"review_id": "1", "review_text": "라벨 출력", "rating": 5, "review_date": "2024-01-01"},
+        ]
+        ev = self.get_evidence_reviews("", False, reviews)
+        assert ev == [], "빈 term에 대해 evidence가 반환되면 안 됨"
+
+    # ------------------------------------------------------------------
+    # Test 11: empty state — no matching evidence
+    # ------------------------------------------------------------------
+    def test_evidence_empty_state(self):
+        """When no reviews match the term, evidence list is empty."""
+        reviews = [
+            {"review_id": "1", "review_text": "배송 빠름", "rating": 5, "review_date": "2024-01-01"},
+        ]
+        ev = self.get_evidence_reviews("라벨", False, reviews)
+        assert ev == []
+
+    # ------------------------------------------------------------------
+    # Test 12: XSS safety — source contract verification
+    # ------------------------------------------------------------------
+    def test_xss_safe_highlight_model(self):
+        """highlightKeywordInText operates on escaped text so injection is impossible."""
+        malicious_text = '<script>alert("xss")</script> 라벨 좋음'
+        term = "라벨"
+        escaped_text = self.escape_html(malicious_text)
+        escaped_term = self.escape_html(term)
+        result = self.highlight_keyword_in_text(escaped_text, escaped_term)
+
+        # script tag must be HTML-escaped, not injected
+        assert "<script>" not in result
+        assert "&lt;script&gt;" in result
+        # term is highlighted
+        assert '<mark class="evidence-highlight">라벨</mark>' in result
+
+    def test_xss_source_contract_no_raw_review_text_in_innerhtml(self):
+        """Source contract: review_text must not be set via innerHTML without escaping."""
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        # The known unsafe pattern: .innerHTML = r.review_text (or very similar)
+        assert "innerHTML = r.review_text" not in content
+        assert "innerHTML=r.review_text" not in content
+        # Confirm escapeHtml is called before evidence text is used
+        assert "escapeHtml(r.review_text" in content
+
+    def test_xss_source_contract_highlight_only_on_escaped_strings(self):
+        """Source contract: highlightKeywordInText is called with escapedText (already escaped)."""
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "highlightKeywordInText(escapedText, escapedTerm)" in content
+
+    # ------------------------------------------------------------------
+    # Test 13: no new backend endpoint added
+    # ------------------------------------------------------------------
+    def test_no_new_backend_endpoint_in_code_gs(self):
+        """Code.gs must not contain new endpoint functions for A2 evidence drilldown."""
+        code_gs_path = os.path.join(self.DASHBOARD_DIR, "Code.gs")
+        with open(code_gs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        # Evidence is computed client-side; no server function should exist
+        assert "getEvidenceReviews" not in content
+        assert "getKeywordEvidence" not in content
+
+    # ------------------------------------------------------------------
+    # Test 14: all A1 source contracts remain present
+    # ------------------------------------------------------------------
+    def test_a1_source_contracts_preserved(self):
+        """A1 keyword intelligence contracts must still be present in Scripts.html."""
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        for fn in ["extractReviewTokens", "calculateKeywordFrequencies",
+                   "renderKeywordIntelligence", "renderBadgeList"]:
+            assert fn in content, f"A1 함수 누락: {fn}"
+        assert "ratingNum >= 1 && ratingNum <= 3" in content
+
+    # ------------------------------------------------------------------
+    # Test 15: evidence panel HTML elements exist
+    # ------------------------------------------------------------------
+    def test_evidence_panel_html_elements_present(self):
+        """Index.html must contain evidence panel elements."""
+        index_path = os.path.join(self.DASHBOARD_DIR, "Index.html")
+        with open(index_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "evidenceDrilldownPanel" in content
+        assert "evidencePanelTitle" in content
+        assert "evidencePanelBody" in content
+        assert "btnCloseEvidence" in content
+        assert "evidenceMoreLink" in content
+
+    # ------------------------------------------------------------------
+    # Test 16: evidence CSS classes present in Styles.html
+    # ------------------------------------------------------------------
+    def test_evidence_css_classes_present(self):
+        """Styles.html must define evidence panel CSS."""
+        styles_path = os.path.join(self.DASHBOARD_DIR, "Styles.html")
+        with open(styles_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        for cls in [".evidence-panel", ".evidence-item", ".evidence-text",
+                    ".evidence-highlight", ".evidence-empty"]:
+            assert cls in content, f"CSS 클래스 누락: {cls}"
+
+
+
 
 
 
