@@ -493,6 +493,140 @@
     container.innerHTML = html;
   }
 
+  function getKeywordProductComparison(term, isLowRating) {
+    if (!term) return [];
+
+    const startDate = document.getElementById('filterStartDate').value;
+    const endDate = document.getElementById('filterEndDate').value;
+    const selectedRating = document.getElementById('filterRating').value;
+
+    // Cross-product population: IGNORE current product filter value!
+    let population = allReviews.filter(function(r) {
+      // Date Filter
+      const rDateStr = r.review_date ? r.review_date.substring(0, 10) : '';
+      if (startDate && rDateStr < startDate) return false;
+      if (endDate && rDateStr > endDate) return false;
+
+      // Rating Filter
+      if (selectedRating !== 'all' && Math.floor(r.rating) !== parseInt(selectedRating, 10)) return false;
+
+      return true;
+    });
+
+    // Low-rating mode restriction: strictly valid ratings 1..3
+    if (isLowRating) {
+      population = population.filter(function(r) {
+        const ratingNum = parseFloat(r.rating);
+        return !isNaN(ratingNum) && ratingNum >= 1 && ratingNum <= 3;
+      });
+    }
+
+    const termLower = term.toLowerCase();
+    const prodMap = {};
+
+    population.forEach(function(r) {
+      const domain = (r.source_domain || 'unknown').trim();
+      const pId = (r.product_id || r.product_name || 'unknown').trim();
+      const pKey = domain + '::' + pId;
+      const pName = (r.product_name || r.product_id || '알 수 없는 상품').trim();
+      const brand = (r.brand || '').trim();
+
+      if (!prodMap[pKey]) {
+        prodMap[pKey] = {
+          productKey: pKey,
+          productName: pName,
+          brand: brand,
+          sourceDomain: domain,
+          eligibleReviewCount: 0,
+          keywordReviewCount: 0
+        };
+      }
+
+      prodMap[pKey].eligibleReviewCount += 1;
+
+      // review_text ONLY matching
+      const text = (r.review_text || '').toLowerCase();
+      if (text.includes(termLower)) {
+        prodMap[pKey].keywordReviewCount += 1;
+      }
+    });
+
+    const items = Object.keys(prodMap).map(function(key) {
+      const p = prodMap[key];
+      const eligible = p.eligibleReviewCount;
+      const matched = p.keywordReviewCount;
+      const rate = eligible > 0 ? (matched / eligible) * 100 : 0;
+      return {
+        productKey: p.productKey,
+        productName: p.productName,
+        brand: p.brand,
+        sourceDomain: p.sourceDomain,
+        eligibleReviewCount: eligible,
+        keywordReviewCount: matched,
+        mentionRate: parseFloat(rate.toFixed(1))
+      };
+    }).filter(function(item) {
+      return item.eligibleReviewCount > 0;
+    });
+
+    items.sort(function(a, b) {
+      if (b.mentionRate !== a.mentionRate) {
+        return b.mentionRate - a.mentionRate;
+      }
+      if (b.keywordReviewCount !== a.keywordReviewCount) {
+        return b.keywordReviewCount - a.keywordReviewCount;
+      }
+      if (b.eligibleReviewCount !== a.eligibleReviewCount) {
+        return b.eligibleReviewCount - a.eligibleReviewCount;
+      }
+      return a.productKey.localeCompare(b.productKey);
+    });
+
+    return items.slice(0, 10);
+  }
+
+  function renderProductComparison(term, isLowRating) {
+    const container = document.getElementById('productComparisonSection');
+    if (!container) return;
+
+    const compData = getKeywordProductComparison(term, isLowRating);
+
+    if (!compData || compData.length === 0) {
+      container.innerHTML = '<div class="comp-empty">제품별 언급률 비교 데이터가 없습니다.</div>';
+      return;
+    }
+
+    let html = '<div class="comp-header">';
+    html += '<span class="comp-title">제품별 키워드 언급률</span>';
+    html += '<span class="comp-subtitle">제품 비교는 현재 제품 선택과 관계없이 동일 기간·평점 조건으로 계산됩니다. (상위 10개 제품 표시)</span>';
+    html += '</div>';
+
+    html += '<div class="comp-grid">';
+    compData.forEach(function(item) {
+      const rateStr = item.mentionRate.toFixed(1) + '%';
+      const countStr = item.keywordReviewCount.toLocaleString() + ' / ' + item.eligibleReviewCount.toLocaleString() + '건';
+      const barWidth = Math.min(100, Math.max(0, item.mentionRate)).toFixed(1) + '%';
+      const metaStr = (item.brand ? escapeHtml(item.brand) + ' · ' : '') + escapeHtml(item.sourceDomain);
+
+      html += '<div class="comp-item">';
+      html += '<div class="comp-item-info">';
+      html += '<div class="comp-item-name" title="' + escapeHtml(item.productName) + '">' + escapeHtml(item.productName) + '</div>';
+      if (metaStr) {
+        html += '<div class="comp-item-meta">' + metaStr + '</div>';
+      }
+      html += '</div>';
+      html += '<div class="comp-bar-wrapper">';
+      html += '<div class="comp-bar-fill" style="width: ' + barWidth + ';"></div>';
+      html += '</div>';
+      html += '<div class="comp-item-rate">' + escapeHtml(rateStr) + '</div>';
+      html += '<div class="comp-item-count">(' + escapeHtml(countStr) + ')</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    container.innerHTML = html;
+  }
+
   function showKeywordEvidence(term, isLowRating) {
     const panel = document.getElementById('evidenceDrilldownPanel');
     const titleEl = document.getElementById('evidencePanelTitle');
@@ -501,6 +635,7 @@
     if (!panel || !body) return;
 
     renderKeywordTrend(term, isLowRating);
+    renderProductComparison(term, isLowRating);
 
     const evidenceReviews = getEvidenceReviews(term, isLowRating);
     const total = evidenceReviews.length;

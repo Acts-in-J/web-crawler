@@ -1928,6 +1928,352 @@ class TestKeywordTrendIntelligence:
         assert "escapeHtml" in body
 
 
+class TestProductKeywordComparison:
+    """A4 Product Keyword Comparison Unit & Contract Tests."""
+
+    DASHBOARD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../apps/review-dashboard"))
+
+    def get_keyword_product_comparison(self, term, is_low_rating, reviews, start_date="", end_date="", rating_filter="all"):
+        if not term:
+            return []
+
+        # 1. Filter population (CROSS-PRODUCT: ignore product selector!)
+        population = []
+        for r in reviews:
+            r_date = (r.get("review_date") or "")[:10]
+            if start_date and r_date < start_date:
+                continue
+            if end_date and r_date > end_date:
+                continue
+            if rating_filter != "all":
+                try:
+                    if int(float(r.get("rating", 0))) != int(rating_filter):
+                        continue
+                except (ValueError, TypeError):
+                    continue
+            population.append(r)
+
+        # 2. Low-rating mode restriction: valid 1 <= rating <= 3 only
+        if is_low_rating:
+            valid_low = []
+            for r in population:
+                try:
+                    r_num = float(r.get("rating"))
+                    if 1 <= r_num <= 3:
+                        valid_low.append(r)
+                except (ValueError, TypeError):
+                    continue
+            population = valid_low
+
+        term_lower = term.lower()
+        prod_map = {}
+
+        for r in population:
+            domain = (r.get("source_domain") or "unknown").strip()
+            p_id = (r.get("product_id") or r.get("product_name") or "unknown").strip()
+            p_key = f"{domain}::{p_id}"
+            p_name = (r.get("product_name") or r.get("product_id") or "알 수 없는 상품").strip()
+            brand = (r.get("brand") or "").strip()
+
+            if p_key not in prod_map:
+                prod_map[p_key] = {
+                    "productKey": p_key,
+                    "productName": p_name,
+                    "brand": brand,
+                    "sourceDomain": domain,
+                    "eligibleReviewCount": 0,
+                    "keywordReviewCount": 0
+                }
+
+            prod_map[p_key]["eligibleReviewCount"] += 1
+
+            text = (r.get("review_text") or "").lower()
+            if term_lower in text:
+                prod_map[p_key]["keywordReviewCount"] += 1
+
+        items = []
+        for key, p in prod_map.items():
+            el = p["eligibleReviewCount"]
+            mt = p["keywordReviewCount"]
+            if el > 0:
+                rate = round((mt / el) * 100, 1)
+                items.append({
+                    "productKey": p["productKey"],
+                    "productName": p["productName"],
+                    "brand": p["brand"],
+                    "sourceDomain": p["sourceDomain"],
+                    "eligibleReviewCount": el,
+                    "keywordReviewCount": mt,
+                    "mentionRate": rate
+                })
+
+        # Sort order: mentionRate DESC, keywordReviewCount DESC, eligibleReviewCount DESC, productKey ASC
+        items.sort(key=lambda x: (-x["mentionRate"], -x["keywordReviewCount"], -x["eligibleReviewCount"], x["productKey"]))
+
+        return items[:10]
+
+    # 1. Functions & HTML panel exist in source
+    def test_a4_functions_and_container_exist_in_source(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        index_path = os.path.join(self.DASHBOARD_DIR, "Index.html")
+        styles_path = os.path.join(self.DASHBOARD_DIR, "Styles.html")
+
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            scripts_content = f.read()
+        with open(index_path, "r", encoding="utf-8") as f:
+            index_content = f.read()
+        with open(styles_path, "r", encoding="utf-8") as f:
+            styles_content = f.read()
+
+        assert "getKeywordProductComparison" in scripts_content
+        assert "renderProductComparison" in scripts_content
+        assert 'id="productComparisonSection"' in index_content
+        assert ".product-comparison-section" in styles_content
+
+    # 2. Composite product identity (source_domain + product_id)
+    def test_composite_product_identity_creation(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "product_name": "라벨기", "review_text": "라벨 테스트", "rating": 5},
+            {"source_domain": "coupang", "product_id": "P1", "product_name": "라벨기", "review_text": "라벨 테스트", "rating": 5},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews)
+        assert len(comp) == 2
+        keys = [item["productKey"] for item in comp]
+        assert "naver::P1" in keys
+        assert "coupang::P1" in keys
+
+    # 3. Same product_name with different stable IDs remains separate
+    def test_same_name_different_ids_remain_separate(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "101", "product_name": "라벨 프린터", "review_text": "라벨 굿", "rating": 5},
+            {"source_domain": "naver", "product_id": "102", "product_name": "라벨 프린터", "review_text": "라벨 굿", "rating": 5},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews)
+        assert len(comp) == 2
+
+    # 4. review_text ONLY numerator
+    def test_review_text_only_numerator(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "review_text": "출력 상태 좋음", "product_option": "라벨 용지 포함", "rating": 5},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews)
+        assert len(comp) == 1
+        assert comp[0]["keywordReviewCount"] == 0
+        assert comp[0]["mentionRate"] == 0.0
+
+    # 5. product_option-only keyword excluded
+    def test_product_option_only_keyword_excluded(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "review_text": "배송이 빠름", "product_option": "라벨 롤", "rating": 5},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews)
+        assert comp[0]["keywordReviewCount"] == 0
+
+    # 6. Repeated keyword in one review counts once
+    def test_repeated_keyword_counts_once(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 최고 라벨 최고 라벨 최고", "rating": 5},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews)
+        assert comp[0]["eligibleReviewCount"] == 1
+        assert comp[0]["keywordReviewCount"] == 1
+        assert comp[0]["mentionRate"] == 100.0
+
+    # 7. Denominator calculation
+    def test_denominator_calculation(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 굿", "rating": 5},
+            {"source_domain": "naver", "product_id": "P1", "review_text": "배송 굿", "rating": 5},
+            {"source_domain": "naver", "product_id": "P1", "review_text": "포장 굿", "rating": 5},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews)
+        assert comp[0]["eligibleReviewCount"] == 3
+        assert comp[0]["keywordReviewCount"] == 1
+        assert comp[0]["mentionRate"] == 33.3
+
+    # 8. Mention-rate calculation
+    def test_mention_rate_calculation(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 굿", "rating": 5},
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 최고", "rating": 5},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews)
+        assert comp[0]["mentionRate"] == 100.0
+
+    # 9. Overall mode
+    def test_overall_mode_includes_all_ratings(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 굿", "rating": 5},
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 별로", "rating": 1},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews)
+        assert comp[0]["eligibleReviewCount"] == 2
+        assert comp[0]["keywordReviewCount"] == 2
+
+    # 10. Low-rating mode strictly 1..3
+    def test_low_rating_mode_strictly_1_to_3(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 굿", "rating": 5},
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 중간", "rating": 3},
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 별로", "rating": 1},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", True, reviews)
+        assert comp[0]["eligibleReviewCount"] == 2  # rating 3 & 1 only
+        assert comp[0]["keywordReviewCount"] == 2
+
+    # 11. Invalid/missing ratings excluded in low mode
+    def test_invalid_ratings_excluded_in_low_mode(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 0점", "rating": 0},
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 누락", "rating": None},
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 2점", "rating": 2},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", True, reviews)
+        assert comp[0]["eligibleReviewCount"] == 1
+
+    # 12. Active rating filter respected
+    def test_active_rating_filter_respected(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 5점", "rating": 5},
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 4점", "rating": 4},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews, rating_filter="5")
+        assert len(comp) == 1
+        assert comp[0]["eligibleReviewCount"] == 1
+
+    # 13. Date range respected
+    def test_date_range_respected(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 1월", "review_date": "2026-01-10", "rating": 5},
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨 5월", "review_date": "2026-05-10", "rating": 5},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews, start_date="2026-05-01")
+        assert len(comp) == 1
+        assert comp[0]["keywordReviewCount"] == 1
+
+    # 14. Product selector intentionally excluded from A4 population in source
+    def test_product_selector_excluded_from_a4_source_contract(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        match = re.search(r"function getKeywordProductComparison\s*\([^)]*\)\s*\{(.*?)\n  \}", content, re.DOTALL)
+        assert match is not None
+        body = match.group(1)
+        assert "filterProduct" not in body, "getKeywordProductComparison 에서 filterProduct 를 참조하면 안 됩니다."
+
+    # 15. Product selector still affects existing A2/A3 behavior
+    def test_product_selector_affects_a2_a3(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        match_a2 = re.search(r"function getEvidenceReviews\s*\([^)]*\)\s*\{(.*?)\n  \}", content, re.DOTALL)
+        assert match_a2 is not None
+        assert "filterProduct" in match_a2.group(1)
+
+        match_a3 = re.search(r"function getKeywordMonthlyTrend\s*\([^)]*\)\s*\{(.*?)\n  \}", content, re.DOTALL)
+        assert match_a3 is not None
+        assert "filterProduct" in match_a3.group(1)
+
+    # 16. Zero denominator / empty population safe
+    def test_zero_denominator_safe(self):
+        comp = self.get_keyword_product_comparison("라벨", False, [])
+        assert comp == []
+
+    # 17. Deterministic sort (mentionRate DESC, keywordCount DESC, eligibleCount DESC, productKey ASC)
+    def test_deterministic_sort(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "review_text": "라벨", "rating": 5},  # 1/1 = 100%
+            {"source_domain": "coupang", "product_id": "P2", "review_text": "라벨", "rating": 5}, # 2/2 = 100%
+            {"source_domain": "coupang", "product_id": "P2", "review_text": "라벨", "rating": 5},
+            {"source_domain": "11st", "product_id": "P3", "review_text": "라벨", "rating": 5},   # 1/2 = 50%
+            {"source_domain": "11st", "product_id": "P3", "review_text": "기타", "rating": 5},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews)
+        assert comp[0]["productKey"] == "coupang::P2"
+        assert comp[1]["productKey"] == "naver::P1"
+        assert comp[2]["productKey"] == "11st::P3"
+
+    # 18. Tie-break deterministic
+    def test_tie_break_deterministic(self):
+        reviews = [
+            {"source_domain": "b_domain", "product_id": "P1", "review_text": "라벨", "rating": 5},
+            {"source_domain": "a_domain", "product_id": "P1", "review_text": "라벨", "rating": 5},
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews)
+        assert comp[0]["productKey"] == "a_domain::P1"
+        assert comp[1]["productKey"] == "b_domain::P1"
+
+    # 19. Top 10 limit
+    def test_top_10_limit(self):
+        reviews = [
+            {"source_domain": "dom", "product_id": f"P{i}", "review_text": "라벨", "rating": 5}
+            for i in range(15)
+        ]
+        comp = self.get_keyword_product_comparison("라벨", False, reviews)
+        assert len(comp) == 10
+
+    # 20. Denominator/count displayed in render
+    def test_render_product_comparison_source_contract(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "renderProductComparison" in content
+        assert "제품 비교는 현재 제품 선택과 관계없이 동일 기간·평점 조건으로 계산됩니다." in content
+
+    # 21. Empty manual search clears comparison
+    def test_empty_manual_search_clears_comparison_source(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "_hideEvidencePanel()" in content
+
+    # 22. Different manual search clears comparison
+    def test_different_manual_search_clears_comparison_source(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "termMatch = keyword === activeEvidenceTerm.toLowerCase()" in content
+
+    # 23. Close/clear hides comparison
+    def test_close_clear_hides_comparison(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "clearEvidencePanel" in content
+        assert "_hideEvidencePanel" in content
+
+    # 24. Same keyword recalculation
+    def test_same_keyword_recalculation(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "renderProductComparison(term, isLowRating)" in content
+
+    # 25. No applyFilters recursion
+    def test_no_apply_filters_recursion_in_hide_evidence(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        match = re.search(r"function _hideEvidencePanel\s*\(\)\s*\{(.*?)\}", content, re.DOTALL)
+        assert match is not None
+        assert "applyFilters" not in match.group(1)
+
+    # 26. Safe DOM rendering / no inline untrusted JS
+    def test_safe_dom_rendering_no_inline_untrusted_js(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        match = re.search(r"function renderProductComparison\s*\([^)]*\)\s*\{(.*?)\n  \}", content, re.DOTALL)
+        assert match is not None
+        body = match.group(1)
+        assert "onclick=" not in body
+        assert "escapeHtml" in body
+
+
+
 
 
 
