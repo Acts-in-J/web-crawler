@@ -1653,6 +1653,282 @@ class TestKeywordEvidenceDrilldown:
             "applyFilters 내에서 불일치 시 _hideEvidencePanel() 을 호출해야 합니다."
 
 
+class TestKeywordTrendIntelligence:
+    """A3 Keyword Trend Intelligence Unit & Contract Tests."""
+
+    DASHBOARD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../apps/review-dashboard"))
+
+    def get_keyword_monthly_trend(self, term, is_low_rating, reviews, product_id="all", start_date="", end_date="", rating_filter="all"):
+        if not term:
+            return []
+
+        # 1. Structural population filtering
+        population = []
+        for r in reviews:
+            if product_id != "all" and r.get("product_id") != product_id:
+                continue
+            r_date = (r.get("review_date") or "")[:10]
+            if start_date and r_date < start_date:
+                continue
+            if end_date and r_date > end_date:
+                continue
+            if rating_filter != "all":
+                try:
+                    if int(float(r.get("rating", 0))) != int(rating_filter):
+                        continue
+                except (ValueError, TypeError):
+                    continue
+            population.append(r)
+
+        # 2. Low-rating filtering: 1 <= rating <= 3
+        if is_low_rating:
+            valid_low = []
+            for r in population:
+                try:
+                    r_num = float(r.get("rating"))
+                    if 1 <= r_num <= 3:
+                        valid_low.append(r)
+                except (ValueError, TypeError):
+                    continue
+            population = valid_low
+
+        # 3. Monthly bucket aggregation
+        term_lower = term.lower()
+        month_map = {}
+
+        for r in population:
+            r_date = r.get("review_date")
+            if not r_date or not isinstance(r_date, str):
+                continue
+            r_date_str = r_date.strip()
+            if len(r_date_str) < 7:
+                continue
+            month_str = r_date_str[:7]
+            if not re.match(r"^\d{4}-\d{2}$", month_str):
+                continue
+
+            if month_str not in month_map:
+                month_map[month_str] = {"eligible_count": 0, "match_count": 0}
+
+            month_map[month_str]["eligible_count"] += 1
+
+            # review_text ONLY matching
+            text = (r.get("review_text") or "").lower()
+            if term_lower in text:
+                month_map[month_str]["match_count"] += 1
+
+        # 4. Sort chronologically (YYYY-MM ASC)
+        sorted_months = sorted(month_map.keys())
+
+        result = []
+        for m in sorted_months:
+            b = month_map[m]
+            el = b["eligible_count"]
+            mt = b["match_count"]
+            rate = round((mt / el) * 100, 1) if el > 0 else 0.0
+            result.append({
+                "month": m,
+                "eligibleReviewCount": el,
+                "keywordReviewCount": mt,
+                "mentionRate": rate
+            })
+
+        return result
+
+    # 1. Functions & HTML panel exist in source
+    def test_a3_functions_and_container_exist_in_source(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        index_path = os.path.join(self.DASHBOARD_DIR, "Index.html")
+        styles_path = os.path.join(self.DASHBOARD_DIR, "Styles.html")
+
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            scripts_content = f.read()
+        with open(index_path, "r", encoding="utf-8") as f:
+            index_content = f.read()
+        with open(styles_path, "r", encoding="utf-8") as f:
+            styles_content = f.read()
+
+        assert "getKeywordMonthlyTrend" in scripts_content
+        assert "renderKeywordTrend" in scripts_content
+        assert 'id="keywordTrendSection"' in index_content
+        assert ".keyword-trend-section" in styles_content
+
+    # 2. review_text ONLY keyword matching
+    def test_review_text_only_keyword_matching(self):
+        reviews = [
+            {"review_id": "1", "review_text": "품질 좋음 라벨 테스트", "product_option": "기타", "review_date": "2026-01-10", "rating": 5},
+            {"review_id": "2", "review_text": "그냥 그래요", "product_option": "라벨 포함", "review_date": "2026-01-12", "rating": 5},
+        ]
+        trend = self.get_keyword_monthly_trend("라벨", False, reviews)
+        assert len(trend) == 1
+        assert trend[0]["eligibleReviewCount"] == 2
+        assert trend[0]["keywordReviewCount"] == 1
+        assert trend[0]["mentionRate"] == 50.0
+
+    # 3. Product_option-only occurrence excluded
+    def test_product_option_only_excluded(self):
+        reviews = [
+            {"review_id": "1", "review_text": "배송이 아주 빨라요", "product_option": "라벨 프린터 용지", "review_date": "2026-02-01", "rating": 5},
+        ]
+        trend = self.get_keyword_monthly_trend("라벨", False, reviews)
+        assert len(trend) == 1
+        assert trend[0]["eligibleReviewCount"] == 1
+        assert trend[0]["keywordReviewCount"] == 0
+        assert trend[0]["mentionRate"] == 0.0
+
+    # 4. Repeated keyword in one review counts once
+    def test_repeated_keyword_in_one_review_counts_once(self):
+        reviews = [
+            {"review_id": "1", "review_text": "라벨 품질 우수. 라벨 세트 추천. 라벨 대족", "review_date": "2026-03-15", "rating": 5},
+        ]
+        trend = self.get_keyword_monthly_trend("라벨", False, reviews)
+        assert len(trend) == 1
+        assert trend[0]["keywordReviewCount"] == 1
+        assert trend[0]["eligibleReviewCount"] == 1
+        assert trend[0]["mentionRate"] == 100.0
+
+    # 5. Monthly aggregation deterministic
+    def test_monthly_aggregation_deterministic(self):
+        reviews = [
+            {"review_id": "1", "review_text": "라벨 최고", "review_date": "2026-04-01", "rating": 5},
+            {"review_id": "2", "review_text": "라벨 별로", "review_date": "2026-04-15", "rating": 2},
+        ]
+        t1 = self.get_keyword_monthly_trend("라벨", False, reviews)
+        t2 = self.get_keyword_monthly_trend("라벨", False, reviews)
+        assert t1 == t2
+
+    # 6. Chronological month ordering (YYYY-MM ASC)
+    def test_chronological_month_ordering(self):
+        reviews = [
+            {"review_id": "1", "review_text": "라벨", "review_date": "2026-07-01", "rating": 5},
+            {"review_id": "2", "review_text": "라벨", "review_date": "2026-05-01", "rating": 5},
+            {"review_id": "3", "review_text": "라벨", "review_date": "2026-06-01", "rating": 5},
+        ]
+        trend = self.get_keyword_monthly_trend("라벨", False, reviews)
+        months = [item["month"] for item in trend]
+        assert months == ["2026-05", "2026-06", "2026-07"]
+
+    # 7. Mention-rate calculation
+    def test_mention_rate_calculation(self):
+        reviews = [
+            {"review_id": "1", "review_text": "라벨 좋음", "review_date": "2026-05-01", "rating": 5},
+            {"review_id": "2", "review_text": "출력 좋음", "review_date": "2026-05-02", "rating": 5},
+            {"review_id": "3", "review_text": "배송 빨라요", "review_date": "2026-05-03", "rating": 5},
+            {"review_id": "4", "review_text": "그냥 그래요", "review_date": "2026-05-04", "rating": 5},
+        ]
+        trend = self.get_keyword_monthly_trend("라벨", False, reviews)
+        assert len(trend) == 1
+        assert trend[0]["eligibleReviewCount"] == 4
+        assert trend[0]["keywordReviewCount"] == 1
+        assert trend[0]["mentionRate"] == 25.0
+
+    # 8. Structural filters reflected
+    def test_structural_filters_reflected(self):
+        reviews = [
+            {"review_id": "1", "product_id": "P1", "review_text": "라벨 A", "review_date": "2026-05-01", "rating": 5},
+            {"review_id": "2", "product_id": "P2", "review_text": "라벨 B", "review_date": "2026-05-02", "rating": 5},
+        ]
+        trend_p1 = self.get_keyword_monthly_trend("라벨", False, reviews, product_id="P1")
+        assert len(trend_p1) == 1
+        assert trend_p1[0]["eligibleReviewCount"] == 1
+        assert trend_p1[0]["keywordReviewCount"] == 1
+
+    # 9. Overall keyword population includes all ratings
+    def test_overall_keyword_population(self):
+        reviews = [
+            {"review_id": "1", "review_text": "라벨 굿", "review_date": "2026-05-01", "rating": 5},
+            {"review_id": "2", "review_text": "라벨 나쁨", "review_date": "2026-05-02", "rating": 1},
+        ]
+        trend = self.get_keyword_monthly_trend("라벨", False, reviews)
+        assert trend[0]["eligibleReviewCount"] == 2
+        assert trend[0]["keywordReviewCount"] == 2
+
+    # 10. Low-rating population strictly 1..3
+    def test_low_rating_population_strictly_1_to_3(self):
+        reviews = [
+            {"review_id": "1", "review_text": "라벨 굿", "review_date": "2026-05-01", "rating": 5},
+            {"review_id": "2", "review_text": "라벨 중간", "review_date": "2026-05-02", "rating": 3},
+            {"review_id": "3", "review_text": "라벨 별로", "review_date": "2026-05-03", "rating": 1},
+        ]
+        trend = self.get_keyword_monthly_trend("라벨", True, reviews)
+        assert trend[0]["eligibleReviewCount"] == 2  # ratings 3 and 1 only
+        assert trend[0]["keywordReviewCount"] == 2
+
+    # 11. Invalid rating excluded from low-rating mode
+    def test_invalid_rating_excluded_from_low_rating(self):
+        reviews = [
+            {"review_id": "1", "review_text": "라벨 무효", "review_date": "2026-05-01", "rating": 0},
+            {"review_id": "2", "review_text": "라벨 누락", "review_date": "2026-05-02", "rating": None},
+            {"review_id": "3", "review_text": "라벨 정상저평점", "review_date": "2026-05-03", "rating": 2},
+        ]
+        trend = self.get_keyword_monthly_trend("라벨", True, reviews)
+        assert trend[0]["eligibleReviewCount"] == 1  # rating 2 only
+        assert trend[0]["keywordReviewCount"] == 1
+
+    # 12. Invalid review_date safely ignored
+    def test_invalid_review_date_safely_ignored(self):
+        reviews = [
+            {"review_id": "1", "review_text": "라벨 무효날짜", "review_date": "INVALID_DATE", "rating": 5},
+            {"review_id": "2", "review_text": "라벨 누락날짜", "review_date": None, "rating": 5},
+            {"review_id": "3", "review_text": "라벨 정상날짜", "review_date": "2026-05-10", "rating": 5},
+        ]
+        trend = self.get_keyword_monthly_trend("라벨", False, reviews)
+        assert len(trend) == 1
+        assert trend[0]["month"] == "2026-05"
+        assert trend[0]["eligibleReviewCount"] == 1
+
+    # 13. Same keyword structural-filter recalculation in source
+    def test_same_keyword_structural_filter_recalculation_source(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "showKeywordEvidence(activeEvidenceTerm, activeEvidenceIsLow)" in content
+        assert "renderKeywordTrend(term, isLowRating)" in content
+
+    # 14. Empty manual search clears trend (via _hideEvidencePanel)
+    def test_empty_manual_search_clears_trend_source(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "_hideEvidencePanel()" in content
+
+    # 15. Different manual search clears trend (via _hideEvidencePanel)
+    def test_different_manual_search_clears_trend_source(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "termMatch = keyword === activeEvidenceTerm.toLowerCase()" in content
+
+    # 16. Close/clear hides trend panel
+    def test_close_clear_hides_trend(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "clearEvidencePanel" in content
+        assert "_hideEvidencePanel" in content
+
+    # 17. No recursion between applyFilters and trend/evidence
+    def test_no_recursion_between_apply_filters_and_trend(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        match = re.search(r"function _hideEvidencePanel\s*\(\)\s*\{(.*?)\}", content, re.DOTALL)
+        assert match is not None
+        assert "applyFilters" not in match.group(1)
+
+    # 18. Safe DOM binding / no keyword interpolation into executable inline JS
+    def test_safe_dom_binding_no_keyword_executable_js(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        match = re.search(r"function renderKeywordTrend\s*\([^)]*\)\s*\{(.*?)\n  \}", content, re.DOTALL)
+        assert match is not None
+        body = match.group(1)
+        assert "onclick=" not in body
+        assert "escapeHtml" in body
+
+
+
 
 
 
