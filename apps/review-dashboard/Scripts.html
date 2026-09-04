@@ -211,27 +211,45 @@
     const container = document.getElementById(containerId);
     if (!container) return;
 
+    container.innerHTML = '';
+
     if (!keywordList || keywordList.length === 0) {
-      container.innerHTML = '<div class="keyword-empty">분석 가능한 빈출 키워드가 없습니다.</div>';
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'keyword-empty';
+      emptyDiv.textContent = '분석 가능한 빈출 키워드가 없습니다.';
+      container.appendChild(emptyDiv);
       return;
     }
 
-    let html = '';
-    keywordList.forEach(item => {
+    const fragment = document.createDocumentFragment();
+    keywordList.forEach(function(item) {
       const isActive = activeKeyword && item.term.toLowerCase() === activeKeyword;
-      const activeClass = isActive ? ' active' : '';
-      const lowClass = isLowRating ? ' low-rating-badge' : '';
-      const lowAttr = isLowRating ? 'true' : 'false';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'keyword-badge' + (isLowRating ? ' low-rating-badge' : '') + (isActive ? ' active' : '');
+      btn.setAttribute('aria-label', item.term + ' 키워드 드릴다운');
 
-      html += `
-        <button type="button" class="keyword-badge${lowClass}${activeClass}" onclick="onKeywordBadgeClick('${escapeHtml(item.term)}', ${lowAttr})" aria-label="${escapeHtml(item.term)} 키워드 드릴다운">
-          <span class="badge-term">${escapeHtml(item.term)}</span>
-          <span class="badge-count">${item.count}</span>
-        </button>
-      `;
+      const termSpan = document.createElement('span');
+      termSpan.className = 'badge-term';
+      termSpan.textContent = item.term;
+
+      const countSpan = document.createElement('span');
+      countSpan.className = 'badge-count';
+      countSpan.textContent = item.count;
+
+      btn.appendChild(termSpan);
+      btn.appendChild(countSpan);
+
+      const termVal = item.term;
+      const lowVal = !!isLowRating;
+      btn.addEventListener('click', function() {
+        onKeywordBadgeClick(termVal, lowVal);
+      });
+
+      fragment.appendChild(btn);
     });
 
-    container.innerHTML = html;
+    container.appendChild(fragment);
   }
 
   function onKeywordBadgeClick(term, isLowRating) {
@@ -304,15 +322,14 @@
     renderKeywordIntelligence(structurallyFilteredReviews);
     renderReviewCards();
 
-    // Refresh evidence panel if active (structural filter changes should re-derive evidence)
+    // Refresh or clear evidence panel if active
     if (activeEvidenceTerm) {
-      if (!keyword) {
-        // Keyword input cleared — clear evidence panel
-        activeEvidenceTerm = null;
-        activeEvidenceIsLow = false;
-        clearEvidencePanel();
+      const termMatch = keyword === activeEvidenceTerm.toLowerCase();
+      if (!keyword || !termMatch) {
+        // Keyword input cleared OR manually changed to a different term -> clear evidence
+        _hideEvidencePanel();
       } else {
-        // Structural filters changed while evidence is open — re-render for new population
+        // Same keyword: structural filter changed while evidence open -> re-render for new population
         showKeywordEvidence(activeEvidenceTerm, activeEvidenceIsLow);
       }
     }
@@ -433,11 +450,15 @@
     panel.style.display = 'block';
   }
 
-  function clearEvidencePanel() {
+  function _hideEvidencePanel() {
     activeEvidenceTerm = null;
     activeEvidenceIsLow = false;
     const panel = document.getElementById('evidenceDrilldownPanel');
     if (panel) panel.style.display = 'none';
+  }
+
+  function clearEvidencePanel() {
+    _hideEvidencePanel();
     // Also clear keyword input and re-apply filters to remove badge active state
     const keywordInput = document.getElementById('filterKeyword');
     if (keywordInput && keywordInput.value) {

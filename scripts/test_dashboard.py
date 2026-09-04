@@ -1606,6 +1606,53 @@ class TestKeywordEvidenceDrilldown:
                     ".evidence-highlight", ".evidence-empty"]:
             assert cls in content, f"CSS 클래스 누락: {cls}"
 
+    # ------------------------------------------------------------------
+    # FIX1 Tests: Security & Evidence State Synchronization
+    # ------------------------------------------------------------------
+    def test_fix1_render_badge_list_no_inline_onclick(self):
+        """renderBadgeList must NOT use inline onclick with string interpolation."""
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Extract renderBadgeList body
+        match = re.search(r"function renderBadgeList\s*\([^)]*\)\s*\{(.*?)\n  \}", content, re.DOTALL)
+        assert match is not None, "renderBadgeList 함수를 찾을 수 없습니다."
+        body = match.group(1)
+
+        assert "onclick=" not in body, "renderBadgeList 내부에 inline onclick이 존재합니다 (XSS 위험)."
+        assert "addEventListener" in body, "renderBadgeList 내부에 addEventListener 가 사용되어야 합니다."
+        assert "textContent = item.term" in body or "textContent = item.term" in body.replace(" ", ""), \
+            "renderBadgeList 에서 textContent 로 키워드 용어를 바인딩해야 합니다."
+
+    def test_fix1_hide_evidence_panel_prevents_recursion(self):
+        """_hideEvidencePanel helper must clear state without calling applyFilters recursively."""
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "function _hideEvidencePanel()" in content, "_hideEvidencePanel 함수가 정의되어 있지 않습니다."
+
+        # Extract _hideEvidencePanel body
+        match = re.search(r"function _hideEvidencePanel\s*\(\)\s*\{(.*?)\}", content, re.DOTALL)
+        assert match is not None
+        body = match.group(1)
+
+        assert "activeEvidenceTerm = null" in body
+        assert "applyFilters" not in body, "_hideEvidencePanel 에서 applyFilters 를 호출하면 재귀가 발생합니다."
+
+    def test_fix1_evidence_state_sync_term_match_check(self):
+        """applyFilters must check termMatch (keyword === activeEvidenceTerm) and clear on mismatch."""
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "termMatch = keyword === activeEvidenceTerm.toLowerCase()" in content, \
+            "applyFilters 내에 activeEvidenceTerm 동기화용 termMatch 검사가 누락되었습니다."
+        assert "_hideEvidencePanel()" in content, \
+            "applyFilters 내에서 불일치 시 _hideEvidencePanel() 을 호출해야 합니다."
+
+
 
 
 
