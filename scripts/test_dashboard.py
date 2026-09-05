@@ -3048,6 +3048,96 @@ class TestPrioritySignalIntelligence:
         assert "renderKeywordTrend" in content
         assert "renderProductComparison" in content
 
+    # 33. Strict low rating exact values accepted (Fix 2 Tests)
+    def test_strict_low_rating_exact_values_accepted(self):
+        valid_values = [1, 2, 3, "1", "2", "3", "1.0", "2.0", "3.0"]
+        for val in valid_values:
+            assert self.is_strict_low_rating(val) is True, f"Failed on valid value: {val}"
+
+        # In calculate_priority_signals
+        reviews = [
+            {"review_text": "키워드일점 테스트", "rating": 1},
+            {"review_text": "키워드일점 확인", "rating": 1},
+            {"review_text": "키워드이점 테스트", "rating": "2"},
+            {"review_text": "키워드이점 확인", "rating": "2"},
+            {"review_text": "키워드삼점 테스트", "rating": "3.0"},
+            {"review_text": "키워드삼점 확인", "rating": "3.0"},
+            {"review_text": "키워드일반", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        terms = {s["term"]: s for s in signals}
+        assert terms["키워드일점"]["lowRatingKeywordCount"] == 2
+        assert terms["키워드이점"]["lowRatingKeywordCount"] == 2
+        assert terms["키워드삼점"]["lowRatingKeywordCount"] == 2
+
+    # 34. Strict low rating fractional rejected
+    def test_strict_low_rating_fractional_rejected(self):
+        assert self.is_strict_low_rating(2.5) is False
+        assert self.is_strict_low_rating("2.5") is False
+        assert self.is_strict_low_rating(1.5) is False
+        assert self.is_strict_low_rating(3.1) is False
+
+        reviews = [
+            {"review_text": "소수점평점 발생", "rating": 2.5},
+            {"review_text": "소수점평점 확인", "rating": "2.5"},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        assert len(signals) == 1
+        assert signals[0]["lowRatingKeywordCount"] == 0
+        assert signals[0]["lowRatingShareOfKeyword"] == 0.0
+
+    # 35. Strict low rating malformed string rejected
+    def test_strict_low_rating_malformed_string_rejected(self):
+        malformed = ["2abc", "1!", "3_test", "2 3", "1.0.0", "2a"]
+        for val in malformed:
+            assert self.is_strict_low_rating(val) is False, f"Failed on malformed string: {val}"
+
+        reviews = [
+            {"review_text": "문자열오류 발생", "rating": "2abc"},
+            {"review_text": "문자열오류 확인", "rating": "2abc"},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        assert len(signals) == 1
+        assert signals[0]["lowRatingKeywordCount"] == 0
+        assert signals[0]["lowRatingShareOfKeyword"] == 0.0
+
+    # 36. Strict low rating empty and invalid rejected
+    def test_strict_low_rating_empty_and_invalid_rejected(self):
+        invalid_values = [None, "", "   ", "invalid", float("nan"), 0, 4, 5, -1, 6, True, False]
+        for val in invalid_values:
+            assert self.is_strict_low_rating(val) is False, f"Failed on invalid value: {val}"
+
+        reviews = [
+            {"review_text": "무효평점", "rating": None},
+            {"review_text": "무효평점", "rating": ""},
+            {"review_text": "무효평점", "rating": "   "},
+            {"review_text": "무효평점", "rating": 0},
+            {"review_text": "무효평점", "rating": 4},
+            {"review_text": "무효평점", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        terms = {s["term"]: s for s in signals}
+        if "무효평점" in terms:
+            assert terms["무효평점"]["lowRatingKeywordCount"] == 0
+
+    # 37. Zero evidence in nonempty multi-product population
+    def test_zero_evidence_nonempty_multi_product_population(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "product_name": "제품 P1", "review_text": "배송 최고", "rating": 5},
+            {"source_domain": "naver", "product_id": "P1", "product_name": "제품 P1", "review_text": "품질 만족", "rating": 5},
+            {"source_domain": "naver", "product_id": "P2", "product_name": "제품 P2", "review_text": "디자인 굿", "rating": 4},
+            {"source_domain": "naver", "product_id": "P2", "product_name": "제품 P2", "review_text": "포장 깔끔", "rating": 4},
+        ]
+        # Requesting a keyword that exists in 0 reviews across all products
+        conc = self.calculate_a5_product_concentration("미등장키워드", reviews)
+
+        assert conc["eligibleProductCount"] >= 2
+        assert conc["totalKeywordReviewCountAcrossProducts"] == 0
+        assert conc["topProductKeywordCount"] == 0
+        assert conc["topProductKeywordShare"] == 0.0
+        assert not str(conc["topProductKeywordShare"]).lower().startswith("nan")
+        assert conc["topProductKeywordShare"] != float("inf")
+
 
 
 
