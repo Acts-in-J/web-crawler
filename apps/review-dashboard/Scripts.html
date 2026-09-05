@@ -252,6 +252,311 @@
     container.appendChild(fragment);
   }
 
+  /* ==========================================================================
+     Priority Signal Intelligence Functions (A5)
+     ========================================================================== */
+
+  function calculatePrioritySignals(structurallyFilteredReviews) {
+    if (!structurallyFilteredReviews || structurallyFilteredReviews.length === 0) {
+      return [];
+    }
+
+    const population = structurallyFilteredReviews;
+    const popCount = population.length;
+
+    // 1. Candidate Keywords: union of overall top 12 and low-rating top 12
+    const overallKw = calculateKeywordFrequencies(population, 12, 2);
+    const lowRatingReviews = population.filter(function(r) {
+      const ratingNum = parseFloat(r.rating);
+      return !isNaN(ratingNum) && ratingNum >= 1 && ratingNum <= 3;
+    });
+    const lowKw = calculateKeywordFrequencies(lowRatingReviews, 12, 2);
+
+    const candidateMap = new Map();
+    overallKw.forEach(function(item) {
+      candidateMap.set(item.term, item.term);
+    });
+    lowKw.forEach(function(item) {
+      candidateMap.set(item.term, item.term);
+    });
+
+    const candidateTerms = Array.from(candidateMap.keys());
+    if (candidateTerms.length === 0) {
+      return [];
+    }
+
+    const lowPopCount = lowRatingReviews.length;
+
+    const signals = candidateTerms.map(function(term) {
+      const termLower = term.toLowerCase();
+
+      // Overall Prevalence & Low-Rating Counts (review_text matching only)
+      let overallReviewCount = 0;
+      let lowRatingKeywordCount = 0;
+
+      population.forEach(function(r) {
+        const text = (r.review_text || '').toLowerCase();
+        if (text.includes(termLower)) {
+          overallReviewCount++;
+          const ratingNum = parseFloat(r.rating);
+          if (!isNaN(ratingNum) && ratingNum >= 1 && ratingNum <= 3) {
+            lowRatingKeywordCount++;
+          }
+        }
+      });
+
+      const overallMentionRate = popCount > 0 ? (overallReviewCount / popCount) * 100 : 0;
+      const lowRatingMentionRate = lowPopCount > 0 ? (lowRatingKeywordCount / lowPopCount) * 100 : 0;
+      const lowRatingShareOfKeyword = overallReviewCount > 0 ? (lowRatingKeywordCount / overallReviewCount) * 100 : 0;
+
+      // 2. Recent Trend (from current structurally filtered population)
+      const monthMap = {};
+      population.forEach(function(r) {
+        if (!r.review_date || typeof r.review_date !== 'string') return;
+        const dateStr = r.review_date.trim();
+        if (dateStr.length < 7) return;
+        const monthStr = dateStr.substring(0, 7);
+        if (!/^\d{4}-\d{2}$/.test(monthStr)) return;
+
+        if (!monthMap[monthStr]) {
+          monthMap[monthStr] = { month: monthStr, eligibleCount: 0, matchCount: 0 };
+        }
+        monthMap[monthStr].eligibleCount += 1;
+        const text = (r.review_text || '').toLowerCase();
+        if (text.includes(termLower)) {
+          monthMap[monthStr].matchCount += 1;
+        }
+      });
+
+      const sortedMonths = Object.keys(monthMap).sort();
+      let hasValidTrend = false;
+      let trendDeltaPctPoint = null;
+      let latestMonthKeywordCount = 0;
+
+      if (sortedMonths.length >= 2) {
+        const latestMonthKey = sortedMonths[sortedMonths.length - 1];
+        const prevMonthKey = sortedMonths[sortedMonths.length - 2];
+        const latestBucket = monthMap[latestMonthKey];
+        const prevBucket = monthMap[prevMonthKey];
+
+        if (latestBucket.eligibleCount > 0 && prevBucket.eligibleCount > 0) {
+          const latestRate = (latestBucket.matchCount / latestBucket.eligibleCount) * 100;
+          const prevRate = (prevBucket.matchCount / prevBucket.eligibleCount) * 100;
+          trendDeltaPctPoint = parseFloat((latestRate - prevRate).toFixed(1));
+          latestMonthKeywordCount = latestBucket.matchCount;
+          hasValidTrend = true;
+        }
+      }
+
+      // 3. Product Concentration
+      const compData = getKeywordProductComparison(term, false);
+      let topProductMentionRate = 0;
+      let topProductKeywordCount = 0;
+      let topProductName = '';
+
+      if (compData && compData.length > 0) {
+        const topProd = compData[0];
+        topProductMentionRate = topProd.mentionRate || 0;
+        topProductKeywordCount = topProd.keywordReviewCount || 0;
+        topProductName = topProd.productName || '';
+      }
+
+      const evidenceCount = overallReviewCount;
+
+      // Deterministic Priority Rules (A, B, C, D)
+      const condA = (lowRatingShareOfKeyword >= 50.0 && lowRatingKeywordCount >= 3);
+      const condB = (hasValidTrend && trendDeltaPctPoint !== null && trendDeltaPctPoint >= 5.0 && latestMonthKeywordCount >= 3);
+      const condC = (topProductMentionRate >= 20.0 && topProductKeywordCount >= 3);
+      const condD = (overallMentionRate >= 15.0 && overallReviewCount >= 5);
+
+      const highCondCount = (condA ? 1 : 0) + (condB ? 1 : 0) + (condC ? 1 : 0) + (condD ? 1 : 0);
+
+      const medFallbackA = (lowRatingShareOfKeyword >= 40.0 && lowRatingKeywordCount >= 2);
+      const medFallbackB = (hasValidTrend && trendDeltaPctPoint !== null && trendDeltaPctPoint >= 3.0 && latestMonthKeywordCount >= 2);
+
+      let priorityLevel = 'WATCH';
+      let priorityScore = 1;
+      let triggeredConditionsCount = highCondCount;
+
+      if (highCondCount >= 2) {
+        priorityLevel = 'HIGH';
+        priorityScore = 3;
+      } else if (highCondCount >= 1 || medFallbackA || medFallbackB) {
+        priorityLevel = 'MEDIUM';
+        priorityScore = 2;
+        triggeredConditionsCount = highCondCount + (medFallbackA && !condA ? 1 : 0) + (medFallbackB && !condB ? 1 : 0);
+      }
+
+      // Deterministic Reasons Generation
+      const reasons = [];
+      if (condA) {
+        reasons.push('언급 리뷰 중 저평점 비중 ' + Math.round(lowRatingShareOfKeyword) + '%');
+      } else if (medFallbackA) {
+        reasons.push('언급 리뷰 중 저평점 비중 ' + Math.round(lowRatingShareOfKeyword) + '%');
+      }
+
+      if (condB) {
+        const sign = trendDeltaPctPoint >= 0 ? '+' : '';
+        reasons.push('최근 월 언급률 ' + sign + trendDeltaPctPoint.toFixed(1) + '%p');
+      } else if (medFallbackB) {
+        const sign = trendDeltaPctPoint >= 0 ? '+' : '';
+        reasons.push('최근 월 언급률 ' + sign + trendDeltaPctPoint.toFixed(1) + '%p');
+      }
+
+      if (condC) {
+        const prodPrefix = topProductName ? topProductName + ' ' : '';
+        reasons.push(prodPrefix + '언급률 ' + topProductMentionRate.toFixed(1) + '%');
+      }
+
+      if (condD) {
+        reasons.push('전체 언급률 ' + overallMentionRate.toFixed(1) + '%');
+      }
+
+      if (reasons.length === 0) {
+        if (lowRatingKeywordCount > 0) {
+          reasons.push('저평점 ' + lowRatingKeywordCount + '건 언급');
+        } else {
+          reasons.push('전체 ' + overallReviewCount + '건 언급');
+        }
+      }
+
+      return {
+        term: term,
+        priorityLevel: priorityLevel,
+        priorityScore: priorityScore,
+        triggeredConditionsCount: triggeredConditionsCount,
+        reasons: reasons,
+        overallReviewCount: overallReviewCount,
+        overallMentionRate: parseFloat(overallMentionRate.toFixed(1)),
+        lowRatingKeywordCount: lowRatingKeywordCount,
+        lowRatingMentionRate: parseFloat(lowRatingMentionRate.toFixed(1)),
+        lowRatingShareOfKeyword: parseFloat(lowRatingShareOfKeyword.toFixed(1)),
+        trendDeltaPctPoint: hasValidTrend ? trendDeltaPctPoint : null,
+        latestMonthKeywordCount: latestMonthKeywordCount,
+        hasValidTrend: hasValidTrend,
+        topProductMentionRate: parseFloat(topProductMentionRate.toFixed(1)),
+        topProductKeywordCount: topProductKeywordCount,
+        topProductName: topProductName,
+        evidenceCount: evidenceCount
+      };
+    });
+
+    // Deterministic Sort Order:
+    // 1. priorityScore DESC (HIGH > MEDIUM > WATCH)
+    // 2. triggeredConditionsCount DESC
+    // 3. lowRatingShareOfKeyword DESC
+    // 4. trendDeltaPctPoint DESC (null treated as -999)
+    // 5. overallReviewCount DESC
+    // 6. term ASC (localeCompare tie-breaker)
+    signals.sort(function(a, b) {
+      if (b.priorityScore !== a.priorityScore) {
+        return b.priorityScore - a.priorityScore;
+      }
+      if (b.triggeredConditionsCount !== a.triggeredConditionsCount) {
+        return b.triggeredConditionsCount - a.triggeredConditionsCount;
+      }
+      if (b.lowRatingShareOfKeyword !== a.lowRatingShareOfKeyword) {
+        return b.lowRatingShareOfKeyword - a.lowRatingShareOfKeyword;
+      }
+      const trendA = a.trendDeltaPctPoint !== null ? a.trendDeltaPctPoint : -999;
+      const trendB = b.trendDeltaPctPoint !== null ? b.trendDeltaPctPoint : -999;
+      if (trendB !== trendA) {
+        return trendB - trendA;
+      }
+      if (b.overallReviewCount !== a.overallReviewCount) {
+        return b.overallReviewCount - a.overallReviewCount;
+      }
+      return a.term.localeCompare(b.term);
+    });
+
+    return signals.slice(0, 10);
+  }
+
+  function renderPrioritySignals(structurallyFilteredReviews) {
+    const container = document.getElementById('prioritySignalGrid');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    const signals = calculatePrioritySignals(structurallyFilteredReviews);
+    const activeKeyword = document.getElementById('filterKeyword').value.trim().toLowerCase();
+
+    if (!signals || signals.length === 0) {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'priority-empty';
+      emptyDiv.textContent = '현재 조건에서 우선 확인할 키워드가 없습니다.';
+      container.appendChild(emptyDiv);
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    signals.forEach(function(item) {
+      const isActive = activeKeyword && item.term.toLowerCase() === activeKeyword;
+      const card = document.createElement('div');
+      card.className = 'priority-card' + (isActive ? ' active' : '');
+      card.setAttribute('role', 'button');
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('aria-label', item.term + ' 우선 확인 신호 드릴다운');
+
+      // Header (Term + Badge)
+      const header = document.createElement('div');
+      header.className = 'priority-card-header';
+
+      const termEl = document.createElement('div');
+      termEl.className = 'priority-card-term';
+      termEl.textContent = item.term;
+
+      const badge = document.createElement('span');
+      let badgeLabel = '추적';
+      let badgeClass = 'priority-badge-watch';
+
+      if (item.priorityLevel === 'HIGH') {
+        badgeLabel = '우선 확인';
+        badgeClass = 'priority-badge-high';
+      } else if (item.priorityLevel === 'MEDIUM') {
+        badgeLabel = '관찰';
+        badgeClass = 'priority-badge-medium';
+      }
+
+      badge.className = 'priority-badge ' + badgeClass;
+      badge.textContent = badgeLabel;
+
+      header.appendChild(termEl);
+      header.appendChild(badge);
+      card.appendChild(header);
+
+      // Reasons List
+      const ul = document.createElement('ul');
+      ul.className = 'priority-reasons';
+
+      item.reasons.forEach(function(reasonText) {
+        const li = document.createElement('li');
+        li.className = 'priority-reason-item';
+        li.textContent = reasonText;
+        ul.appendChild(li);
+      });
+
+      card.appendChild(ul);
+
+      // Safe click listener (reuses A2 Evidence, A3 Trend, A4 Product Comparison)
+      const termVal = item.term;
+      card.addEventListener('click', function() {
+        onKeywordBadgeClick(termVal, false);
+      });
+
+      card.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onKeywordBadgeClick(termVal, false);
+        }
+      });
+
+      fragment.appendChild(card);
+    });
+
+    container.appendChild(fragment);
+  }
+
   function onKeywordBadgeClick(term, isLowRating) {
     const keywordInput = document.getElementById('filterKeyword');
     if (keywordInput) {
@@ -319,6 +624,7 @@
     updateKPIs();
     renderMonthlyChart();
     renderRatingBarChart();
+    renderPrioritySignals(structurallyFilteredReviews);
     renderKeywordIntelligence(structurallyFilteredReviews);
     renderReviewCards();
 

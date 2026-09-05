@@ -1933,7 +1933,8 @@ class TestProductKeywordComparison:
 
     DASHBOARD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../apps/review-dashboard"))
 
-    def get_keyword_product_comparison(self, term, is_low_rating, reviews, start_date="", end_date="", rating_filter="all"):
+    @staticmethod
+    def get_keyword_product_comparison(term, is_low_rating, reviews, start_date="", end_date="", rating_filter="all"):
         if not term:
             return []
 
@@ -2271,6 +2272,665 @@ class TestProductKeywordComparison:
         body = match.group(1)
         assert "onclick=" not in body
         assert "escapeHtml" in body
+
+
+# ---------------------------------------------------------------------------
+# A5 Priority Signal Intelligence Test Suite
+# ---------------------------------------------------------------------------
+
+
+class TestPrioritySignalIntelligence:
+    """A5 Priority Signal Intelligence 단위 및 계약 테스트."""
+
+    DASHBOARD_DIR = DASHBOARD_DIR
+
+    @staticmethod
+    def extract_review_tokens(text: str) -> list[str]:
+        if not text:
+            return []
+        cleaned = re.sub(r"[^a-zA-Z0-9\u3131-\u318E\uAC00-\uD7A3\s]", " ", str(text).lower())
+        tokens = cleaned.split()
+        stopwords = {
+            '그리고', '하지만', '정말', '너무', '그냥', '있는', '없는', '합니다', '했어요', '입니다',
+            '있는것', '같아요', '하고', '해서', '하면', '이거', '이것', '하나', '것도', '많이',
+            '아주', '조금', '다시', '지금', '되어', '되면', '까지', '부터', '으로', '에게', '한테',
+            '바로', '사용할', '있어서', '없이', '있어요', '다양한', '있고', '있는데', '있습니다', '있었어요',
+            '사용하기', '사용해서', '사용하면',
+            'the', 'and', 'for', 'this', 'that', 'with', 'from', 'they', 'them', 'what', 'have', 'has', 'had', 'were', 'will', 'would', 'could', 'should'
+        }
+        res = []
+        for t in tokens:
+            t = t.strip()
+            if len(t) < 2 or t.isdigit() or t in stopwords:
+                continue
+            res.append(t)
+        return res
+
+    @classmethod
+    def calculate_keyword_frequencies(cls, reviews: list[dict], max_terms: int = 12, min_count: int = 2) -> list[dict]:
+        freq_map = {}
+        for r in reviews:
+            tokens = cls.extract_review_tokens(r.get("review_text", ""))
+            for t in set(tokens):
+                freq_map[t] = freq_map.get(t, 0) + 1
+        items = [{"term": t, "count": c} for t, c in freq_map.items() if c >= min_count]
+        items.sort(key=lambda x: (-x["count"], x["term"]))
+        return items[:max_terms]
+
+    @classmethod
+    def get_keyword_product_comparison(cls, term: str, is_low_rating: bool, reviews: list[dict],
+                                      start_date: str = "", end_date: str = "", rating_filter: str = "all") -> list[dict]:
+        return TestProductKeywordComparison.get_keyword_product_comparison(term, is_low_rating, reviews, start_date, end_date, rating_filter)
+
+    @classmethod
+    def calculate_priority_signals(cls, reviews: list[dict], selected_product: str = "all",
+                                   start_date: str = "", end_date: str = "",
+                                   selected_rating: str = "all") -> list[dict]:
+        if not reviews:
+            return []
+
+        # 1. Structural Filter (product filter DOES apply to A5)
+        population = []
+        for r in reviews:
+            if selected_product != "all" and r.get("product_id") != selected_product:
+                continue
+            r_date = str(r.get("review_date", ""))[:10]
+            if start_date and r_date < start_date:
+                continue
+            if end_date and r_date > end_date:
+                continue
+            if selected_rating != "all":
+                try:
+                    if int(float(r.get("rating", 0))) != int(selected_rating):
+                        continue
+                except (ValueError, TypeError):
+                    continue
+            population.append(r)
+
+        pop_count = len(population)
+        if pop_count == 0:
+            return []
+
+        # Low-rating sub-population (strictly 1..3)
+        low_population = []
+        for r in population:
+            try:
+                r_num = float(r.get("rating"))
+                if 1 <= r_num <= 3:
+                    low_population.append(r)
+            except (ValueError, TypeError):
+                continue
+
+        low_pop_count = len(low_population)
+
+        # Candidate keywords from A1
+        overall_kw = cls.calculate_keyword_frequencies(population, 12, 2)
+        low_kw = cls.calculate_keyword_frequencies(low_population, 12, 2)
+
+        candidate_terms = []
+        seen = set()
+        for item in overall_kw + low_kw:
+            t = item["term"]
+            if t not in seen:
+                seen.add(t)
+                candidate_terms.append(t)
+
+        if not candidate_terms:
+            return []
+
+        signals = []
+        for term in candidate_terms:
+            term_lower = term.lower()
+
+            overall_count = sum(1 for r in population if term_lower in (r.get("review_text") or "").lower())
+            low_count = sum(1 for r in low_population if term_lower in (r.get("review_text") or "").lower())
+
+            overall_mention_rate = round((overall_count / pop_count) * 100, 1) if pop_count > 0 else 0.0
+            low_mention_rate = round((low_count / low_pop_count) * 100, 1) if low_pop_count > 0 else 0.0
+            low_share = round((low_count / overall_count) * 100, 1) if overall_count > 0 else 0.0
+
+            # Monthly Trend
+            month_map = {}
+            for r in population:
+                d_str = str(r.get("review_date", "")).strip()
+                if len(d_str) >= 7 and re.match(r"^\d{4}-\d{2}", d_str):
+                    m = d_str[:7]
+                    if m not in month_map:
+                        month_map[m] = {"eligible": 0, "match": 0}
+                    month_map[m]["eligible"] += 1
+                    if term_lower in (r.get("review_text") or "").lower():
+                        month_map[m]["match"] += 1
+
+            sorted_months = sorted(month_map.keys())
+            has_valid_trend = False
+            trend_delta = None
+            latest_month_count = 0
+
+            if len(sorted_months) >= 2:
+                last_m = month_map[sorted_months[-1]]
+                prev_m = month_map[sorted_months[-2]]
+                if last_m["eligible"] > 0 and prev_m["eligible"] > 0:
+                    last_rate = (last_m["match"] / last_m["eligible"]) * 100
+                    prev_rate = (prev_m["match"] / prev_m["eligible"]) * 100
+                    trend_delta = round(last_rate - prev_rate, 1)
+                    latest_month_count = last_m["match"]
+                    has_valid_trend = True
+
+            # Product concentration (cross-product comparison under same date/rating filter)
+            comp = cls.get_keyword_product_comparison(term, False, reviews, start_date=start_date, end_date=end_date, rating_filter=selected_rating)
+            top_prod_rate = 0.0
+            top_prod_count = 0
+            top_prod_name = ""
+            if comp:
+                top_prod = comp[0]
+                top_prod_rate = top_prod["mentionRate"]
+                top_prod_count = top_prod["keywordReviewCount"]
+                top_prod_name = top_prod["productName"]
+
+            # Rules
+            cond_a = (low_share >= 50.0 and low_count >= 3)
+            cond_b = (has_valid_trend and trend_delta is not None and trend_delta >= 5.0 and latest_month_count >= 3)
+            cond_c = (top_prod_rate >= 20.0 and top_prod_count >= 3)
+            cond_d = (overall_mention_rate >= 15.0 and overall_count >= 5)
+
+            high_count = sum([cond_a, cond_b, cond_c, cond_d])
+            med_fallback_a = (low_share >= 40.0 and low_count >= 2)
+            med_fallback_b = (has_valid_trend and trend_delta is not None and trend_delta >= 3.0 and latest_month_count >= 2)
+
+            priority_level = "WATCH"
+            priority_score = 1
+            triggered_count = high_count
+
+            if high_count >= 2:
+                priority_level = "HIGH"
+                priority_score = 3
+            elif high_count >= 1 or med_fallback_a or med_fallback_b:
+                priority_level = "MEDIUM"
+                priority_score = 2
+                triggered_count = high_count + (1 if (med_fallback_a and not cond_a) else 0) + (1 if (med_fallback_b and not cond_b) else 0)
+
+            # Reasons
+            reasons = []
+            if cond_a or med_fallback_a:
+                reasons.append(f"언급 리뷰 중 저평점 비중 {round(low_share)}%")
+            if cond_b or med_fallback_b:
+                sign = "+" if trend_delta >= 0 else ""
+                reasons.append(f"최근 월 언급률 {sign}{trend_delta:.1f}%p")
+            if cond_c:
+                prod_prefix = f"{top_prod_name} " if top_prod_name else ""
+                reasons.append(f"{prod_prefix}언급률 {top_prod_rate:.1f}%")
+            if cond_d:
+                reasons.append(f"전체 언급률 {overall_mention_rate:.1f}%")
+
+            if not reasons:
+                if low_count > 0:
+                    reasons.append(f"저평점 {low_count}건 언급")
+                else:
+                    reasons.append(f"전체 {overall_count}건 언급")
+
+            signals.append({
+                "term": term,
+                "priorityLevel": priority_level,
+                "priorityScore": priority_score,
+                "triggeredConditionsCount": triggered_count,
+                "reasons": reasons,
+                "overallReviewCount": overall_count,
+                "overallMentionRate": overall_mention_rate,
+                "lowRatingKeywordCount": low_count,
+                "lowRatingMentionRate": low_mention_rate,
+                "lowRatingShareOfKeyword": low_share,
+                "trendDeltaPctPoint": trend_delta,
+                "latestMonthKeywordCount": latest_month_count,
+                "hasValidTrend": has_valid_trend,
+                "topProductMentionRate": top_prod_rate,
+                "topProductKeywordCount": top_prod_count,
+                "topProductName": top_prod_name,
+                "evidenceCount": overall_count,
+            })
+
+        # Sort order: priorityScore DESC, triggeredConditionsCount DESC, lowRatingShare DESC, trendDelta DESC, overallReviewCount DESC, term ASC
+        signals.sort(key=lambda x: (
+            -x["priorityScore"],
+            -x["triggeredConditionsCount"],
+            -x["lowRatingShareOfKeyword"],
+            -(x["trendDeltaPctPoint"] if x["trendDeltaPctPoint"] is not None else -999),
+            -x["overallReviewCount"],
+            x["term"]
+        ))
+
+        return signals[:10]
+
+    # 1. Priority section exists in HTML and Styles
+    def test_priority_section_exists_in_html_and_styles(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        index_path = os.path.join(self.DASHBOARD_DIR, "Index.html")
+        styles_path = os.path.join(self.DASHBOARD_DIR, "Styles.html")
+
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            scripts = f.read()
+        with open(index_path, "r", encoding="utf-8") as f:
+            index = f.read()
+        with open(styles_path, "r", encoding="utf-8") as f:
+            styles = f.read()
+
+        assert "calculatePrioritySignals" in scripts
+        assert "renderPrioritySignals" in scripts
+        assert 'id="prioritySignalSection"' in index
+        assert 'id="prioritySignalGrid"' in index
+        assert ".priority-signal-section" in styles
+        assert ".priority-badge-high" in styles
+        assert ".priority-badge-medium" in styles
+        assert ".priority-badge-watch" in styles
+
+    # 2. Candidate keywords reuse A1 population
+    def test_candidate_keywords_reuse_a1_population(self):
+        reviews = [
+            {"review_text": "배송 지연 너무 심해요", "rating": 1},
+            {"review_text": "배송 진짜 느림", "rating": 2},
+            {"review_text": "출력 품질 대만족", "rating": 5},
+            {"review_text": "출력 상태 최고", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        terms = [s["term"] for s in signals]
+        assert "배송" in terms
+        assert "출력" in terms
+
+    # 3. Overall + low keyword union deduplicated
+    def test_overall_and_low_keyword_union_deduplicated(self):
+        reviews = [
+            {"review_text": "배송 문제 발생", "rating": 1},
+            {"review_text": "배송 불만족", "rating": 2},
+            {"review_text": "배송 정상 도착", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        terms = [s["term"] for s in signals]
+        assert terms.count("배송") == 1
+
+    # 4. Overall prevalence calculation
+    def test_overall_prevalence_calculation(self):
+        reviews = [
+            {"review_text": "품질 만족", "rating": 5},
+            {"review_text": "품질 보통", "rating": 4},
+            {"review_text": "디자인 예쁨", "rating": 5},
+            {"review_text": "디자인 별로", "rating": 2},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        qual = next(s for s in signals if s["term"] == "품질")
+        assert qual["overallReviewCount"] == 2
+        assert qual["overallMentionRate"] == 50.0
+
+    # 5. lowRatingMentionRate calculation
+    def test_low_rating_mention_rate_calculation(self):
+        reviews = [
+            {"review_text": "배송 지연", "rating": 1},
+            {"review_text": "배송 파손", "rating": 2},
+            {"review_text": "포장 불량", "rating": 3},
+            {"review_text": "만족", "rating": 5},
+        ]
+        # lowRating population = 3 (ratings 1, 2, 3)
+        signals = self.calculate_priority_signals(reviews)
+        ship = next(s for s in signals if s["term"] == "배송")
+        assert ship["lowRatingKeywordCount"] == 2
+        assert ship["lowRatingMentionRate"] == round((2 / 3) * 100, 1)
+
+    # 6. lowRatingShareOfKeyword calculation (distinct from lowRatingMentionRate)
+    def test_low_rating_share_of_keyword_calculation(self):
+        reviews = [
+            {"review_text": "배송 지연", "rating": 1},
+            {"review_text": "배송 파손", "rating": 2},
+            {"review_text": "배송 빠름", "rating": 5},
+            {"review_text": "배송 굿", "rating": 5},
+            {"review_text": "기타 불만", "rating": 2},
+        ]
+        # overall 배송 count = 4, low 배송 count = 2
+        # lowRatingShareOfKeyword = 2 / 4 = 50.0%
+        # lowRatingMentionRate = 2 / 3 (total low rating reviews = 3) = 66.7%
+        signals = self.calculate_priority_signals(reviews)
+        ship = next(s for s in signals if s["term"] == "배송")
+        assert ship["lowRatingShareOfKeyword"] == 50.0
+        assert ship["lowRatingMentionRate"] == round((2 / 3) * 100, 1)
+        assert ship["lowRatingShareOfKeyword"] != ship["lowRatingMentionRate"]
+
+    # 7. Low rating strictly 1..3
+    def test_low_rating_strictly_1_to_3(self):
+        reviews = [
+            {"review_text": "버그 1점", "rating": 1},
+            {"review_text": "버그 2점", "rating": 2},
+            {"review_text": "버그 3점", "rating": 3},
+            {"review_text": "버그 4점", "rating": 4},
+            {"review_text": "버그 5점", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        bug = next(s for s in signals if s["term"] == "버그")
+        assert bug["lowRatingKeywordCount"] == 3  # 1, 2, 3 only
+
+    # 8. Invalid rating exclusion
+    def test_invalid_rating_exclusion(self):
+        reviews = [
+            {"review_text": "오류 테스트", "rating": None},
+            {"review_text": "오류 테스트", "rating": "invalid"},
+            {"review_text": "오류 테스트", "rating": 0},
+            {"review_text": "오류 테스트", "rating": 2},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        err = next(s for s in signals if s["term"] == "오류")
+        assert err["lowRatingKeywordCount"] == 1  # 2 only
+
+    # 9. Two-month trend delta
+    def test_two_month_trend_delta(self):
+        reviews = [
+            {"review_text": "소음 심함", "review_date": "2026-01-10", "rating": 4},
+            {"review_text": "일반", "review_date": "2026-01-15", "rating": 4},  # 1/2 = 50%
+            {"review_text": "소음 발생", "review_date": "2026-02-10", "rating": 4},
+            {"review_text": "소음 문제", "review_date": "2026-02-12", "rating": 4},
+            {"review_text": "소음 고장", "review_date": "2026-02-15", "rating": 4},
+            {"review_text": "일반", "review_date": "2026-02-20", "rating": 4},  # 3/4 = 75%
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        noise = next(s for s in signals if s["term"] == "소음")
+        assert noise["hasValidTrend"] is True
+        assert noise["trendDeltaPctPoint"] == 25.0
+
+    # 10. Insufficient trend data does not trigger trend rule
+    def test_insufficient_trend_data_does_not_trigger_trend_rule(self):
+        reviews = [
+            {"review_text": "소음 발생", "review_date": "2026-02-10", "rating": 4},
+            {"review_text": "소음 문제", "review_date": "2026-02-12", "rating": 4},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        noise = next(s for s in signals if s["term"] == "소음")
+        assert noise["hasValidTrend"] is False
+        assert noise["trendDeltaPctPoint"] is None
+
+    # 11. Product concentration metric
+    def test_product_concentration_metric(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "product_name": "특정프린터", "review_text": "고장 발생", "rating": 4},
+            {"source_domain": "naver", "product_id": "P1", "product_name": "특정프린터", "review_text": "고장 재발", "rating": 4},
+            {"source_domain": "naver", "product_id": "P2", "product_name": "다른프린터", "review_text": "정상 작동", "rating": 4},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        fail = next(s for s in signals if s["term"] == "고장")
+        assert fail["topProductKeywordCount"] == 2
+        assert fail["topProductMentionRate"] == 100.0
+
+    # 12. Evidence count
+    def test_evidence_count(self):
+        reviews = [
+            {"review_text": "인쇄 상태 양호", "rating": 5},
+            {"review_text": "인쇄 품질 굿", "rating": 5},
+            {"review_text": "인쇄 완료", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        prt = next(s for s in signals if s["term"] == "인쇄")
+        assert prt["evidenceCount"] == 3
+
+    # 13. HIGH requires two HIGH conditions
+    def test_high_priority_requires_two_high_conditions(self):
+        # Condition A: lowRatingShare >= 50% & count >= 3
+        # Condition D: overallMentionRate >= 15% & overallReviewCount >= 5
+        reviews = [
+            {"review_text": "환불 요청", "rating": 1},
+            {"review_text": "환불 처리", "rating": 1},
+            {"review_text": "환불 지연", "rating": 2},
+            {"review_text": "환불 완료", "rating": 5},
+            {"review_text": "환불 문의", "rating": 5},
+            {"review_text": "기타 리뷰", "rating": 5},
+        ]
+        # overall count = 5 / 6 = 83.3% (Cond D triggered: rate >= 15% & count >= 5)
+        # low count = 3, low share = 3/5 = 60.0% (Cond A triggered: share >= 50% & count >= 3)
+        signals = self.calculate_priority_signals(reviews)
+        ref = next(s for s in signals if s["term"] == "환불")
+        assert ref["priorityLevel"] == "HIGH"
+        assert ref["priorityScore"] == 3
+
+    # 14. MEDIUM with one HIGH condition
+    def test_medium_priority_with_one_high_condition(self):
+        # Condition A only (lowShare >= 50% & lowCount >= 3), overall count = 3 / 30 (< 15%)
+        reviews = [
+            {"review_text": "파손 도착", "rating": 1},
+            {"review_text": "파손 심함", "rating": 1},
+            {"review_text": "파손 교환", "rating": 2},
+        ] + [{"review_text": f"일반 리뷰 {i}", "rating": 5} for i in range(25)]
+
+        signals = self.calculate_priority_signals(reviews)
+        dmg = next(s for s in signals if s["term"] == "파손")
+        assert dmg["priorityLevel"] == "MEDIUM"
+        assert dmg["priorityScore"] == 2
+
+    # 15. MEDIUM fallback rule
+    def test_medium_fallback_rule(self):
+        # Fallback A: lowRatingShare >= 40% & lowRatingKeywordCount >= 2 (not 3)
+        reviews = [
+            {"review_text": "지연 배송", "rating": 1},
+            {"review_text": "지연 발생", "rating": 2},
+            {"review_text": "지연 확인", "rating": 5},
+            {"review_text": "지연 안내", "rating": 5},
+        ] + [{"review_text": f"기타 {i}", "rating": 5} for i in range(20)]
+        # overall count = 4, low count = 2, low share = 50.0% (count < 3, so not Cond A, but matches fallback A >= 40% & count >= 2)
+        signals = self.calculate_priority_signals(reviews)
+        dly = next(s for s in signals if s["term"] == "지연")
+        assert dly["priorityLevel"] == "MEDIUM"
+
+    # 16. WATCH fallback
+    def test_watch_fallback(self):
+        reviews = [
+            {"review_text": "포장 상태 굿", "rating": 5},
+            {"review_text": "포장 깔끔", "rating": 5},
+        ] + [{"review_text": f"기타 {i}", "rating": 5} for i in range(20)]
+        signals = self.calculate_priority_signals(reviews)
+        pkg = next(s for s in signals if s["term"] == "포장")
+        assert pkg["priorityLevel"] == "WATCH"
+        assert pkg["priorityScore"] == 1
+
+    # 17. No opaque score required
+    def test_no_opaque_score_required(self):
+        reviews = [
+            {"review_text": "배송 문제", "rating": 1},
+            {"review_text": "배송 지연", "rating": 2},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        for s in signals:
+            assert s["priorityLevel"] in ["HIGH", "MEDIUM", "WATCH"]
+            assert "score_0_to_100" not in s
+
+    # 18. Deterministic reason generation
+    def test_deterministic_reason_generation(self):
+        reviews = [
+            {"review_text": "배송 지연", "rating": 1},
+            {"review_text": "배송 파손", "rating": 2},
+            {"review_text": "배송 불만", "rating": 3},
+            {"review_text": "배송 굿", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        ship = next(s for s in signals if s["term"] == "배송")
+        assert any("저평점 비중" in r for r in ship["reasons"])
+
+    # 19. Deterministic level ordering
+    def test_deterministic_level_ordering(self):
+        reviews = [
+            # HIGH: refund (Cond A + Cond D)
+            {"review_text": "환불 1", "rating": 1},
+            {"review_text": "환불 2", "rating": 1},
+            {"review_text": "환불 3", "rating": 2},
+            {"review_text": "환불 4", "rating": 5},
+            {"review_text": "환불 5", "rating": 5},
+            # MEDIUM: delay (Fallback A: low count 2, low share 50%)
+            {"review_text": "지연 1", "rating": 1},
+            {"review_text": "지연 2", "rating": 2},
+            {"review_text": "지연 3", "rating": 5},
+            {"review_text": "지연 4", "rating": 5},
+            # WATCH: packing
+            {"review_text": "포장 1", "rating": 5},
+            {"review_text": "포장 2", "rating": 5},
+        ] + [{"review_text": f"기타 {i}", "rating": 5} for i in range(20)]
+
+        signals = self.calculate_priority_signals(reviews)
+        levels = [s["priorityLevel"] for s in signals]
+        # HIGH must come before MEDIUM, MEDIUM before WATCH
+        high_idx = [i for i, l in enumerate(levels) if l == "HIGH"]
+        med_idx = [i for i, l in enumerate(levels) if l == "MEDIUM"]
+        watch_idx = [i for i, l in enumerate(levels) if l == "WATCH"]
+
+        if high_idx and med_idx:
+            assert max(high_idx) < min(med_idx)
+        if med_idx and watch_idx:
+            assert max(med_idx) < min(watch_idx)
+
+    # 20. Deterministic tie-break ordering
+    def test_deterministic_tie_break_ordering(self):
+        reviews = [
+            {"review_text": "가나다 굿", "rating": 5},
+            {"review_text": "가나다 굿", "rating": 5},
+            {"review_text": "마바사 굿", "rating": 5},
+            {"review_text": "마바사 굿", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        terms = [s["term"] for s in signals]
+        # Same level, count, and metrics -> term ASC
+        assert terms[0] == "가나다"
+        assert terms[1] == "마바사"
+
+    # 21. Top 10 limit
+    def test_top_10_limit(self):
+        reviews = []
+        for i in range(15):
+            word = f"키워드{i:02d}"
+            reviews.append({"review_text": f"{word} 테스트", "rating": 5})
+            reviews.append({"review_text": f"{word} 확인", "rating": 5})
+
+        signals = self.calculate_priority_signals(reviews)
+        assert len(signals) <= 10
+
+    # 22. Product filter applies to A5
+    def test_product_filter_applies_to_a5(self):
+        reviews = [
+            {"product_id": "P1", "review_text": "배송 빠름", "rating": 5},
+            {"product_id": "P1", "review_text": "배송 굿", "rating": 5},
+            {"product_id": "P2", "review_text": "품질 대만족", "rating": 5},
+            {"product_id": "P2", "review_text": "품질 최고", "rating": 5},
+        ]
+        signals_p1 = self.calculate_priority_signals(reviews, selected_product="P1")
+        terms_p1 = [s["term"] for s in signals_p1]
+        assert "배송" in terms_p1
+        assert "품질" not in terms_p1
+
+    # 23. Date filter applies
+    def test_date_filter_applies(self):
+        reviews = [
+            {"review_date": "2026-01-10", "review_text": "과거 문제", "rating": 1},
+            {"review_date": "2026-01-15", "review_text": "과거 문제", "rating": 1},
+            {"review_date": "2026-05-10", "review_text": "최신 만족", "rating": 5},
+            {"review_date": "2026-05-15", "review_text": "최신 만족", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews, start_date="2026-05-01")
+        terms = [s["term"] for s in signals]
+        assert "최신" in terms
+        assert "과거" not in terms
+
+    # 24. Rating filter applies
+    def test_rating_filter_applies(self):
+        reviews = [
+            {"review_text": "별점일점 단어", "rating": 1},
+            {"review_text": "별점일점 단어", "rating": 1},
+            {"review_text": "별점오점 단어", "rating": 5},
+            {"review_text": "별점오점 단어", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews, selected_rating="5")
+        terms = [s["term"] for s in signals]
+        assert "별점오점" in terms
+        assert "별점일점" not in terms
+
+    # 25. review_text-only keyword source
+    def test_review_text_only_keyword_source(self):
+        reviews = [
+            {"product_name": "상품명만존재", "review_text": "본문 텍스트", "rating": 5},
+            {"product_name": "상품명만존재", "review_text": "본문 텍스트", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        terms = [s["term"] for s in signals]
+        assert "본문" in terms
+        assert "상품명만존재" not in terms
+
+    # 26. product_option excluded
+    def test_product_option_excluded(self):
+        reviews = [
+            {"product_option": "옵션단어", "review_text": "본문리뷰", "rating": 5},
+            {"product_option": "옵션단어", "review_text": "본문리뷰", "rating": 5},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        terms = [s["term"] for s in signals]
+        assert "본문리뷰" in terms
+        assert "옵션단어" not in terms
+
+    # 27. Click reuses A2/A3/A4 selection behavior
+    def test_click_reuses_a2_a3_a4_selection_behavior(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        match = re.search(r"function renderPrioritySignals\s*\([^)]*\)\s*\{(.*?)\n  \}", content, re.DOTALL)
+        assert match is not None
+        body = match.group(1)
+        assert "onKeywordBadgeClick(termVal, false)" in body
+
+    # 28. Safe DOM event binding
+    def test_safe_dom_event_binding(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        match = re.search(r"function renderPrioritySignals\s*\([^)]*\)\s*\{(.*?)\n  \}", content, re.DOTALL)
+        assert match is not None
+        body = match.group(1)
+        assert "addEventListener" in body
+        assert "onclick=" not in body
+
+    # 29. No unsafe keyword JS interpolation
+    def test_no_unsafe_keyword_js_interpolation(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        match = re.search(r"function renderPrioritySignals\s*\([^)]*\)\s*\{(.*?)\n  \}", content, re.DOTALL)
+        assert match is not None
+        body = match.group(1)
+        assert "innerHTML = " not in body or body.count("innerHTML = ''") == 1
+        assert "textContent =" in body
+
+    # 30. Empty state handling
+    def test_empty_state_handling(self):
+        signals = self.calculate_priority_signals([])
+        assert signals == []
+
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "현재 조건에서 우선 확인할 키워드가 없습니다." in content
+
+    # 31. NaN / Infinity prevention
+    def test_nan_infinity_prevention(self):
+        reviews = [
+            {"review_text": "단독 단어", "rating": 0},
+            {"review_text": "단독 단어", "rating": 0},
+        ]
+        signals = self.calculate_priority_signals(reviews)
+        for s in signals:
+            assert not str(s["overallMentionRate"]).lower().startswith("nan")
+            assert not str(s["lowRatingMentionRate"]).lower().startswith("nan")
+            assert not str(s["lowRatingShareOfKeyword"]).lower().startswith("nan")
+
+    # 32. Existing A1~A4 regressions
+    def test_existing_a1_to_a4_regressions(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "renderKeywordIntelligence" in content
+        assert "showKeywordEvidence" in content
+        assert "renderKeywordTrend" in content
+        assert "renderProductComparison" in content
+
 
 
 
