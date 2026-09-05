@@ -2317,10 +2317,98 @@ class TestPrioritySignalIntelligence:
         items.sort(key=lambda x: (-x["count"], x["term"]))
         return items[:max_terms]
 
+    @staticmethod
+    def is_strict_low_rating(val) -> bool:
+        if val is None or val == "":
+            return False
+        if isinstance(val, int) and not isinstance(val, bool):
+            return val in (1, 2, 3)
+        if isinstance(val, float):
+            return val.is_integer() and int(val) in (1, 2, 3)
+        if isinstance(val, str):
+            val_str = val.strip()
+            if re.match(r"^[1-3](\.0+)?$", val_str):
+                try:
+                    num = float(val_str)
+                    return num.is_integer() and int(num) in (1, 2, 3)
+                except ValueError:
+                    return False
+        return False
+
     @classmethod
-    def get_keyword_product_comparison(cls, term: str, is_low_rating: bool, reviews: list[dict],
-                                      start_date: str = "", end_date: str = "", rating_filter: str = "all") -> list[dict]:
-        return TestProductKeywordComparison.get_keyword_product_comparison(term, is_low_rating, reviews, start_date, end_date, rating_filter)
+    def calculate_a5_product_concentration(cls, term: str, reviews: list[dict], start_date: str = "", end_date: str = "", rating_filter: str = "all") -> dict:
+        if not term or not reviews:
+            return {
+                "eligibleProductCount": 0,
+                "totalKeywordReviewCountAcrossProducts": 0,
+                "topProductKeywordCount": 0,
+                "topProductKeywordShare": 0.0,
+                "topProductName": "",
+                "topProductKey": ""
+            }
+
+        population = []
+        for r in reviews:
+            r_date = str(r.get("review_date", ""))[:10]
+            if start_date and r_date < start_date:
+                continue
+            if end_date and r_date > end_date:
+                continue
+            if rating_filter != "all":
+                try:
+                    if int(float(r.get("rating", 0))) != int(rating_filter):
+                        continue
+                except (ValueError, TypeError):
+                    continue
+            population.append(r)
+
+        term_lower = term.lower()
+        prod_map = {}
+        for r in population:
+            domain = (r.get("source_domain") or "unknown").strip()
+            p_id = (r.get("product_id") or r.get("product_name") or "unknown").strip()
+            p_key = f"{domain}::{p_id}"
+            p_name = (r.get("product_name") or r.get("product_id") or "알 수 없는 상품").strip()
+
+            if p_key not in prod_map:
+                prod_map[p_key] = {
+                    "productKey": p_key,
+                    "productName": p_name,
+                    "eligibleReviewCount": 0,
+                    "keywordReviewCount": 0
+                }
+
+            prod_map[p_key]["eligibleReviewCount"] += 1
+            if term_lower in (r.get("review_text") or "").lower():
+                prod_map[p_key]["keywordReviewCount"] += 1
+
+        all_prods = [p for p in prod_map.values() if p["eligibleReviewCount"] > 0]
+        eligible_prod_count = len(all_prods)
+        total_kw_count = sum(p["keywordReviewCount"] for p in all_prods)
+
+        all_prods.sort(key=lambda x: (-x["keywordReviewCount"], x["productKey"]))
+
+        top_kw_count = 0
+        top_share = 0.0
+        top_name = ""
+        top_key = ""
+
+        if all_prods:
+            top = all_prods[0]
+            top_kw_count = top["keywordReviewCount"]
+            top_name = top["productName"]
+            top_key = top["productKey"]
+            if total_kw_count > 0:
+                top_share = round((top_kw_count / total_kw_count) * 100, 1)
+
+        return {
+            "eligibleProductCount": eligible_prod_count,
+            "totalKeywordReviewCountAcrossProducts": total_kw_count,
+            "topProductKeywordCount": top_kw_count,
+            "topProductKeywordShare": top_share,
+            "topProductName": top_name,
+            "topProductKey": top_key
+        }
 
     @classmethod
     def calculate_priority_signals(cls, reviews: list[dict], selected_product: str = "all",
@@ -2352,15 +2440,7 @@ class TestPrioritySignalIntelligence:
             return []
 
         # Low-rating sub-population (strictly 1..3)
-        low_population = []
-        for r in population:
-            try:
-                r_num = float(r.get("rating"))
-                if 1 <= r_num <= 3:
-                    low_population.append(r)
-            except (ValueError, TypeError):
-                continue
-
+        low_population = [r for r in population if cls.is_strict_low_rating(r.get("rating"))]
         low_pop_count = len(low_population)
 
         # Candidate keywords from A1
@@ -2416,21 +2496,13 @@ class TestPrioritySignalIntelligence:
                     latest_month_count = last_m["match"]
                     has_valid_trend = True
 
-            # Product concentration (cross-product comparison under same date/rating filter)
-            comp = cls.get_keyword_product_comparison(term, False, reviews, start_date=start_date, end_date=end_date, rating_filter=selected_rating)
-            top_prod_rate = 0.0
-            top_prod_count = 0
-            top_prod_name = ""
-            if comp:
-                top_prod = comp[0]
-                top_prod_rate = top_prod["mentionRate"]
-                top_prod_count = top_prod["keywordReviewCount"]
-                top_prod_name = top_prod["productName"]
+            # True Product concentration (A5)
+            prod_conc = cls.calculate_a5_product_concentration(term, reviews, start_date=start_date, end_date=end_date, rating_filter=selected_rating)
 
             # Rules
             cond_a = (low_share >= 50.0 and low_count >= 3)
             cond_b = (has_valid_trend and trend_delta is not None and trend_delta >= 5.0 and latest_month_count >= 3)
-            cond_c = (top_prod_rate >= 20.0 and top_prod_count >= 3)
+            cond_c = (prod_conc["eligibleProductCount"] >= 2 and prod_conc["topProductKeywordShare"] >= 60.0 and prod_conc["topProductKeywordCount"] >= 3)
             cond_d = (overall_mention_rate >= 15.0 and overall_count >= 5)
 
             high_count = sum([cond_a, cond_b, cond_c, cond_d])
@@ -2457,8 +2529,7 @@ class TestPrioritySignalIntelligence:
                 sign = "+" if trend_delta >= 0 else ""
                 reasons.append(f"최근 월 언급률 {sign}{trend_delta:.1f}%p")
             if cond_c:
-                prod_prefix = f"{top_prod_name} " if top_prod_name else ""
-                reasons.append(f"{prod_prefix}언급률 {top_prod_rate:.1f}%")
+                reasons.append(f"제품 집중: [{prod_conc['topProductName']}] {prod_conc['topProductKeywordShare']:.1f}% ({prod_conc['topProductKeywordCount']}/{prod_conc['totalKeywordReviewCountAcrossProducts']}건)")
             if cond_d:
                 reasons.append(f"전체 언급률 {overall_mention_rate:.1f}%")
 
@@ -2482,9 +2553,11 @@ class TestPrioritySignalIntelligence:
                 "trendDeltaPctPoint": trend_delta,
                 "latestMonthKeywordCount": latest_month_count,
                 "hasValidTrend": has_valid_trend,
-                "topProductMentionRate": top_prod_rate,
-                "topProductKeywordCount": top_prod_count,
-                "topProductName": top_prod_name,
+                "eligibleProductCount": prod_conc["eligibleProductCount"],
+                "totalKeywordReviewCountAcrossProducts": prod_conc["totalKeywordReviewCountAcrossProducts"],
+                "topProductKeywordCount": prod_conc["topProductKeywordCount"],
+                "topProductKeywordShare": prod_conc["topProductKeywordShare"],
+                "topProductName": prod_conc["topProductName"],
                 "evidenceCount": overall_count,
             })
 
@@ -2515,12 +2588,15 @@ class TestPrioritySignalIntelligence:
 
         assert "calculatePrioritySignals" in scripts
         assert "renderPrioritySignals" in scripts
+        assert "calculateA5ProductConcentration" in scripts
+        assert "isStrictLowRating" in scripts
         assert 'id="prioritySignalSection"' in index
         assert 'id="prioritySignalGrid"' in index
         assert ".priority-signal-section" in styles
         assert ".priority-badge-high" in styles
         assert ".priority-badge-medium" in styles
         assert ".priority-badge-watch" in styles
+        assert ".priority-card-evidence" in styles
 
     # 2. Candidate keywords reuse A1 population
     def test_candidate_keywords_reuse_a1_population(self):
@@ -2642,17 +2718,61 @@ class TestPrioritySignalIntelligence:
         assert noise["hasValidTrend"] is False
         assert noise["trendDeltaPctPoint"] is None
 
-    # 11. Product concentration metric
-    def test_product_concentration_metric(self):
+    # 11. True Product concentration discriminating metric (Fix 1)
+    def test_product_concentration_discriminating_metric(self):
+        # Product P1: 10 eligible reviews, 3 keyword reviews (30% within-product rate, 60% concentration)
+        # Product P2: 2 eligible reviews, 2 keyword reviews (100% within-product rate, 40% concentration)
         reviews = [
-            {"source_domain": "naver", "product_id": "P1", "product_name": "특정프린터", "review_text": "고장 발생", "rating": 4},
-            {"source_domain": "naver", "product_id": "P1", "product_name": "특정프린터", "review_text": "고장 재발", "rating": 4},
-            {"source_domain": "naver", "product_id": "P2", "product_name": "다른프린터", "review_text": "정상 작동", "rating": 4},
+            {"source_domain": "naver", "product_id": "P1", "product_name": "제품 P1", "review_text": "고장 문제", "rating": 4},
+            {"source_domain": "naver", "product_id": "P1", "product_name": "제품 P1", "review_text": "고장 발생", "rating": 4},
+            {"source_domain": "naver", "product_id": "P1", "product_name": "제품 P1", "review_text": "고장 재발", "rating": 4},
+        ] + [
+            {"source_domain": "naver", "product_id": "P1", "product_name": "제품 P1", "review_text": f"일반 {i}", "rating": 4}
+            for i in range(7)
+        ] + [
+            {"source_domain": "naver", "product_id": "P2", "product_name": "제품 P2", "review_text": "고장 확인", "rating": 4},
+            {"source_domain": "naver", "product_id": "P2", "product_name": "제품 P2", "review_text": "고장 점검", "rating": 4},
         ]
+
+        conc = self.calculate_a5_product_concentration("고장", reviews)
+        assert conc["topProductName"] == "제품 P1"
+        assert conc["topProductKeywordCount"] == 3
+        assert conc["totalKeywordReviewCountAcrossProducts"] == 5
+        assert conc["topProductKeywordShare"] == 60.0
+        assert conc["eligibleProductCount"] == 2
+
+    # 11-B. One eligible product does NOT trigger Condition C
+    def test_one_eligible_product_does_not_trigger_condition_c(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P1", "product_name": "단독제품", "review_text": "고장 1", "rating": 4},
+            {"source_domain": "naver", "product_id": "P1", "product_name": "단독제품", "review_text": "고장 2", "rating": 4},
+            {"source_domain": "naver", "product_id": "P1", "product_name": "단독제품", "review_text": "고장 3", "rating": 4},
+            {"source_domain": "naver", "product_id": "P1", "product_name": "단독제품", "review_text": "고장 4", "rating": 4},
+        ] + [{"source_domain": "naver", "product_id": "P1", "product_name": "단독제품", "review_text": f"기타 {i}", "rating": 4} for i in range(25)]
+
         signals = self.calculate_priority_signals(reviews)
         fail = next(s for s in signals if s["term"] == "고장")
-        assert fail["topProductKeywordCount"] == 2
-        assert fail["topProductMentionRate"] == 100.0
+        assert fail["eligibleProductCount"] == 1
+        # Condition C must NOT trigger because eligibleProductCount < 2
+        assert not any("제품 집중:" in r for r in fail["reasons"])
+
+    # 11-C. Concentration tie has deterministic product identity tie-break
+    def test_concentration_tie_has_deterministic_product_identity_tie_break(self):
+        reviews = [
+            {"source_domain": "naver", "product_id": "P2", "product_name": "B제품", "review_text": "오류 1", "rating": 4},
+            {"source_domain": "naver", "product_id": "P2", "product_name": "B제품", "review_text": "오류 2", "rating": 4},
+            {"source_domain": "naver", "product_id": "P1", "product_name": "A제품", "review_text": "오류 1", "rating": 4},
+            {"source_domain": "naver", "product_id": "P1", "product_name": "A제품", "review_text": "오류 2", "rating": 4},
+        ]
+        conc = self.calculate_a5_product_concentration("오류", reviews)
+        assert conc["topProductKey"] == "naver::P1"
+
+    # 11-D. Zero keyword evidence is safe
+    def test_zero_keyword_evidence_is_safe(self):
+        conc = self.calculate_a5_product_concentration("없는단어", [])
+        assert conc["eligibleProductCount"] == 0
+        assert conc["totalKeywordReviewCountAcrossProducts"] == 0
+        assert conc["topProductKeywordShare"] == 0.0
 
     # 12. Evidence count
     def test_evidence_count(self):
@@ -2665,10 +2785,17 @@ class TestPrioritySignalIntelligence:
         prt = next(s for s in signals if s["term"] == "인쇄")
         assert prt["evidenceCount"] == 3
 
+    # 12-B. Evidence count rendered on card in source
+    def test_evidence_count_rendered_on_card_in_source(self):
+        scripts_path = os.path.join(self.DASHBOARD_DIR, "Scripts.html")
+        with open(scripts_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        assert "priority-card-evidence" in content
+        assert "근거 리뷰 " in content
+
     # 13. HIGH requires two HIGH conditions
     def test_high_priority_requires_two_high_conditions(self):
-        # Condition A: lowRatingShare >= 50% & count >= 3
-        # Condition D: overallMentionRate >= 15% & overallReviewCount >= 5
         reviews = [
             {"review_text": "환불 요청", "rating": 1},
             {"review_text": "환불 처리", "rating": 1},
@@ -2677,8 +2804,6 @@ class TestPrioritySignalIntelligence:
             {"review_text": "환불 문의", "rating": 5},
             {"review_text": "기타 리뷰", "rating": 5},
         ]
-        # overall count = 5 / 6 = 83.3% (Cond D triggered: rate >= 15% & count >= 5)
-        # low count = 3, low share = 3/5 = 60.0% (Cond A triggered: share >= 50% & count >= 3)
         signals = self.calculate_priority_signals(reviews)
         ref = next(s for s in signals if s["term"] == "환불")
         assert ref["priorityLevel"] == "HIGH"
@@ -2686,7 +2811,6 @@ class TestPrioritySignalIntelligence:
 
     # 14. MEDIUM with one HIGH condition
     def test_medium_priority_with_one_high_condition(self):
-        # Condition A only (lowShare >= 50% & lowCount >= 3), overall count = 3 / 30 (< 15%)
         reviews = [
             {"review_text": "파손 도착", "rating": 1},
             {"review_text": "파손 심함", "rating": 1},
@@ -2700,14 +2824,12 @@ class TestPrioritySignalIntelligence:
 
     # 15. MEDIUM fallback rule
     def test_medium_fallback_rule(self):
-        # Fallback A: lowRatingShare >= 40% & lowRatingKeywordCount >= 2 (not 3)
         reviews = [
             {"review_text": "지연 배송", "rating": 1},
             {"review_text": "지연 발생", "rating": 2},
             {"review_text": "지연 확인", "rating": 5},
             {"review_text": "지연 안내", "rating": 5},
         ] + [{"review_text": f"기타 {i}", "rating": 5} for i in range(20)]
-        # overall count = 4, low count = 2, low share = 50.0% (count < 3, so not Cond A, but matches fallback A >= 40% & count >= 2)
         signals = self.calculate_priority_signals(reviews)
         dly = next(s for s in signals if s["term"] == "지연")
         assert dly["priorityLevel"] == "MEDIUM"
@@ -2749,25 +2871,21 @@ class TestPrioritySignalIntelligence:
     # 19. Deterministic level ordering
     def test_deterministic_level_ordering(self):
         reviews = [
-            # HIGH: refund (Cond A + Cond D)
             {"review_text": "환불 1", "rating": 1},
             {"review_text": "환불 2", "rating": 1},
             {"review_text": "환불 3", "rating": 2},
             {"review_text": "환불 4", "rating": 5},
             {"review_text": "환불 5", "rating": 5},
-            # MEDIUM: delay (Fallback A: low count 2, low share 50%)
             {"review_text": "지연 1", "rating": 1},
             {"review_text": "지연 2", "rating": 2},
             {"review_text": "지연 3", "rating": 5},
             {"review_text": "지연 4", "rating": 5},
-            # WATCH: packing
             {"review_text": "포장 1", "rating": 5},
             {"review_text": "포장 2", "rating": 5},
         ] + [{"review_text": f"기타 {i}", "rating": 5} for i in range(20)]
 
         signals = self.calculate_priority_signals(reviews)
         levels = [s["priorityLevel"] for s in signals]
-        # HIGH must come before MEDIUM, MEDIUM before WATCH
         high_idx = [i for i, l in enumerate(levels) if l == "HIGH"]
         med_idx = [i for i, l in enumerate(levels) if l == "MEDIUM"]
         watch_idx = [i for i, l in enumerate(levels) if l == "WATCH"]
@@ -2787,7 +2905,6 @@ class TestPrioritySignalIntelligence:
         ]
         signals = self.calculate_priority_signals(reviews)
         terms = [s["term"] for s in signals]
-        # Same level, count, and metrics -> term ASC
         assert terms[0] == "가나다"
         assert terms[1] == "마바사"
 
